@@ -1,3 +1,4 @@
+/*
 Golang Cron expression parser
 =============================
 Given a cron expression and a time stamp, you can get the next time stamp which satisfies the cron expression.
@@ -27,7 +28,7 @@ The reference documentation for this implementation is found at
 The asterisk indicates that the cron expression matches for all values of the field. E.g., using an asterisk in the 4th field (month) indicates every month. 
 
 #### Slash ( / )
-Slashes describe increments of ranges. For example `3-59/15` in the minute field indicate the third minute of the hour and every 15 minutes thereafter. The form `*/...` is equivalent to the form "first-last/...", that is, an increment over the largest possible range of the field.
+Slashes describe increments of ranges. For example `3-59/15` in the minute field indicate the third minute of the hour and every 15 minutes thereafter. The form `*\/...` is equivalent to the form "first-last/...", that is, an increment over the largest possible range of the field.
 
 #### Comma ( , )
 Commas are used to separate items of a list. For example, using `MON,WED,FRI` in the 5th field (day of week) means Mondays, Wednesdays and Fridays.
@@ -123,5 +124,5 @@ returned.
 API
 ---
 <http://godoc.org/github.com/gorhill/cronexpr>
-
+*/
 package cronexpr

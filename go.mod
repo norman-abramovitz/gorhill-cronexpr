@@ -1,3 +1,3 @@
-module github.com/norman-abramovitz/gorhill-cronexpr
+module github.com/cronexpr
 
 go 1.23.1

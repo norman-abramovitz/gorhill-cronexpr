@@ -109,7 +109,7 @@ var (
 		`11`: 11, `nov`: 11, `november`: 11,
 		`12`: 12, `dec`: 12, `december`: 12,
 	}
-	dowTokens = map[string]int{
+	dowVixieTokens = map[string]int{
 		`0`: 0, `sun`: 0, `sunday`: 0,
 		`1`: 1, `mon`: 1, `monday`: 1,
 		`2`: 2, `tue`: 2, `tuesday`: 2,
@@ -118,6 +118,16 @@ var (
 		`5`: 5, `fri`: 5, `friday`: 5,
 		`6`: 6, `sat`: 6, `saturday`: 6,
 		`7`: 0,
+	}
+
+	dowQuartzTokens = map[string]int{
+		`1`: 0, `sun`: 0, `sunday`: 0,
+		`2`: 1, `mon`: 1, `monday`: 1,
+		`3`: 2, `tue`: 2, `tuesday`: 2,
+		`4`: 3, `wed`: 3, `wednesday`: 3,
+		`5`: 4, `thu`: 4, `thursday`: 4,
+		`6`: 5, `fri`: 5, `friday`: 5,
+		`7`: 6, `sat`: 6, `saturday`: 6,
 	}
 )
 
@@ -185,7 +195,11 @@ var (
 		defaultList:  genericDefaultList[0:7],
 		valuePattern: `0?[0-7]|sun|mon|tue|wed|thu|fri|sat|sunday|monday|tuesday|wednesday|thursday|friday|saturday`,
 		atoi: func(s string) int {
-			return dowTokens[s]
+			if CronExprSpec == Quartz {
+				return dowQuartzTokens[s]
+			} else {
+				return dowVixieTokens[s]
+		}
 		},
 	}
 	yearDescriptor = fieldDescriptor{

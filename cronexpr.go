@@ -21,6 +21,20 @@ import (
 	"time"
 )
 
+type CronSpec int
+
+const (
+	Gorhill CronSpec = iota
+	Vixie
+	Quartz
+)
+
+var CronExprSpec CronSpec = Gorhill
+
+func (d CronSpec) String() string {
+	return [...]string{"Gorhil", "Vixie", "Quartz",}[d]
+}
+
 /******************************************************************************/
 
 // A Expression represents a specific cron time expression as defined at

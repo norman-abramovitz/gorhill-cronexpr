@@ -38,9 +38,9 @@ func main() {
 	var err error
 
 	flag.Usage = usage
-	flag.StringVar(&inTimeStr, "t", "", `whole or partial RFC3339 time value (i.e. "2006-01-02T15:04:05Z07:00") against which the cron expression is evaluated, now if not present`)
+	flag.StringVar(&inTimeStr, "t", "", "whole or partial RFC3339 time value\n(i.e. \"2006-01-02T15:04:05Z07:00\") against which the\ncron expression is evaluated, now if not present\n")
 	flag.UintVar(&outTimeCount, "n", 1, `number of resulting time values to output`)
-	flag.StringVar(&outTimeLayout, "l", "Mon, 02 Jan 2006 15:04:05 MST", `Go-compliant time layout to use for outputting time value(s), see <http://golang.org/pkg/time/#pkg-constants>`)
+	flag.StringVar(&outTimeLayout, "l", "Mon, 02 Jan 2006 15:04:05 MST", "Go-compliant time layout to use\nfor outputting time value(s), see\n<http://golang.org/pkg/time/#pkg-constants>\n")
 	flag.Parse()
 
 	cronStr := flag.Arg(0)
@@ -84,7 +84,7 @@ func main() {
 			inTime, err = time.Parse(inTimeLayout, inTimeStr)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "# error: unparseable time value: \"%s\"\n", inTimeStr)
+			fmt.Fprintf(os.Stderr, "# error: unparseable time value: \"%s\" (\"%s\")\n", inTimeStr, inTimeLayout)
 			os.Exit(1)
 		}
 	}

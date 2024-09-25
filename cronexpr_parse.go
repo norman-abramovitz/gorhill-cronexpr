@@ -315,7 +315,7 @@ func genericFieldHandler(s string, desc fieldDescriptor) ([]int, error) {
 			populateOne(values, directive.first)
 		case span:
 			if desc.name != "year" {
-				populateOverflow(values, directive.first, directive.last, directive.step, desc.min, desc.max)
+				populateManyWithOverflow(values, directive.first, directive.last, directive.step, desc.min, desc.max)
 			} else {
 				if directive.first > directive.last {
 					return nil, fmt.Errorf("range must be low to high in %s field: '%s'", desc.name, s[directive.sbeg:directive.send])
@@ -425,7 +425,7 @@ func populateOne(values map[int]bool, v int) {
 	values[v] = true
 }
 
-func populateOverflow(values map[int]bool, first, last, step, min, max int) {
+func populateManyWithOverflow(values map[int]bool, first, last, step, min, max int) {
 	if first > last {
 		for i := first; i <= max; i += step {
 			values[i] = true

@@ -199,7 +199,7 @@ var (
 				return dowQuartzTokens[s]
 			} else {
 				return dowVixieTokens[s]
-		}
+			}
 		},
 	}
 	yearDescriptor = fieldDescriptor{
@@ -222,6 +222,7 @@ var (
 	layoutValueAndInterval    = `^(%value%)/(\d+)$`
 	layoutRangeAndInterval    = `^(%value%)-(%value%)/(\d+)$`
 	layoutLastDom             = `^l$`
+	layoutLastDomAndOffset    = `^l-(%value%)$`
 	layoutWorkdom             = `^(%value%)w$`
 	layoutLastWorkdom         = `^lw$`
 	layoutDowOfLastWeek       = `^(%value%)l$`
@@ -373,8 +374,9 @@ func (expr *Expression) domFieldHandler(s string) error {
 	expr.daysOfMonthRestricted = true
 	expr.lastDayOfMonth = false
 	expr.lastWorkdayOfMonth = false
-	expr.daysOfMonth = make(map[int]bool)     // days of month map
-	expr.workdaysOfMonth = make(map[int]bool) // work days of month map
+	expr.daysOfMonth = make(map[int]bool)           // days of month map
+	expr.lastDayOfMonthOffsets = make(map[int]bool) // last days of month offset map
+	expr.workdaysOfMonth = make(map[int]bool)       // work days of month map
 
 	directives, err := genericFieldParse(s, domDescriptor)
 	if err != nil {
@@ -389,18 +391,20 @@ func (expr *Expression) domFieldHandler(s string) error {
 			// `L`
 			if makeLayoutRegexp(layoutLastDom, domDescriptor.valuePattern).MatchString(snormal) {
 				expr.lastDayOfMonth = true
-			} else {
+				// `L-2`
+			} else if pairs := makeLayoutRegexp(layoutLastDomAndOffset, domDescriptor.valuePattern).
+				FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+				populateOne(expr.lastDayOfMonthOffsets, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 				// `LW`
-				if makeLayoutRegexp(layoutLastWorkdom, domDescriptor.valuePattern).MatchString(snormal) {
-					expr.lastWorkdayOfMonth = true
+			} else if makeLayoutRegexp(layoutLastWorkdom, domDescriptor.valuePattern).MatchString(snormal) {
+				expr.lastWorkdayOfMonth = true
+			} else {
+				// `15W`
+				if pairs := makeLayoutRegexp(layoutWorkdom, domDescriptor.valuePattern).
+					FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+					populateOne(expr.workdaysOfMonth, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 				} else {
-					// `15W`
-					pairs := makeLayoutRegexp(layoutWorkdom, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
-					if len(pairs) > 0 {
-						populateOne(expr.workdaysOfMonth, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
-					} else {
-						return fmt.Errorf("syntax error in day-of-month field: '%s'", sdirective)
-					}
+					return fmt.Errorf("syntax error in day-of-month field: '%s'", sdirective)
 				}
 			}
 		case one:

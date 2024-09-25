@@ -15,6 +15,7 @@ package cronexpr
 /******************************************************************************/
 
 import (
+	_ "fmt"
 	"sort"
 	"time"
 )
@@ -212,6 +213,14 @@ func (expr *Expression) calculateActualDaysOfMonth(year, month int) []int {
 		// Last work day of month
 		if expr.lastWorkdayOfMonth {
 			actualDaysOfMonthMap[workdayOfMonth(lastDayOfMonth, lastDayOfMonth)] = true
+		}
+		// Last day of month Offsets
+		for v := range expr.lastDayOfMonthOffsets {
+			// Ignore days beyond beginning of month
+			lastDay := lastDayOfMonth.Day() - v
+			if lastDay > 0 {
+				actualDaysOfMonthMap[lastDay] = true
+			}
 		}
 		// Days of month
 		for v := range expr.daysOfMonth {

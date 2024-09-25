@@ -32,7 +32,7 @@ const (
 var CronExprSpec CronSpec = Gorhill
 
 func (d CronSpec) String() string {
-	return [...]string{"Gorhil", "Vixie", "Quartz",}[d]
+	return [...]string{"Gorhil", "Vixie", "Quartz"}[d]
 }
 
 /******************************************************************************/
@@ -47,6 +47,7 @@ type Expression struct {
 	daysOfMonth            map[int]bool
 	workdaysOfMonth        map[int]bool
 	lastDayOfMonth         bool
+	lastDayOfMonthOffsets  map[int]bool
 	lastWorkdayOfMonth     bool
 	daysOfMonthRestricted  bool
 	actualDaysOfMonthList  []int

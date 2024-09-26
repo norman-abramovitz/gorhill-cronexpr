@@ -145,6 +145,10 @@ type fieldDescriptor struct {
 	atoi         func(string) int
 }
 
+// NOTE The regex value pattern does its best to restrict the value range
+//      So, places where you might expect to see out of bounds checking
+//      it is not needed.
+
 var (
 	secondDescriptor = fieldDescriptor{
 		name:         "second",
@@ -241,6 +245,7 @@ var cronNormalizer = strings.NewReplacer(
 	"@monthly", "0 0 0 1 * * *",
 	"@weekly", "0 0 0 * * 0 *",
 	"@daily", "0 0 0 * * * *",
+	"@midnight", "0 0 0 * * * *",
 	"@hourly", "0 0 * * * * *")
 
 /******************************************************************************/

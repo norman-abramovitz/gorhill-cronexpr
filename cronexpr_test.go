@@ -215,6 +215,60 @@ func TestExpressions(t *testing.T) {
 }
 
 /******************************************************************************/
+type predefinecrontest struct {
+	expr   string
+	layout string
+	times  []crontimes
+}
+var predefinetests = []predefinecrontest{
+	{
+		"@midnight",
+		"Mon 2006-01-02 15:04:05",
+		[] crontimes {
+			{"2013-02-27 00:00:00", "Thu 2013-02-28 00:00:00"},
+			{"2013-02-28 00:00:00", "Fri 2013-03-01 00:00:00"},
+			{"2016-02-28 13:00:00", "Mon 2016-02-29 00:00:00"},
+		},
+	},
+	{
+		"@hourly",
+		"Mon 2006-01-02 15:04:05",
+		[] crontimes {
+			{"2016-02-27 13:00:00", "Sat 2016-02-27 14:00:00"},
+			{"2016-02-29 04:00:00", "Mon 2016-02-29 05:00:00"},
+		},
+	},
+	{
+		"@weekly",
+		"Mon 2006-01-02 15:04:05",
+		[] crontimes {
+			{"2013-02-27 13:00:00", "Sun 2013-03-03 00:00:00"},
+			{"2016-02-28 04:00:00", "Sun 2016-03-06 00:00:00"},
+		},
+	},
+}
+
+func TestPredefineExpressions(t *testing.T) {
+	for _, test := range predefinetests {
+		for _, times := range test.times {
+			from, _ := time.Parse("2006-01-02 15:04:05", times.from)
+			expr, err := Parse(test.expr)
+			if err != nil {
+				t.Errorf(`Parse("%s") returned "%s"`, test.expr, err.Error())
+			}
+			next := expr.Next(from)
+			nextstr := next.Format(test.layout)
+			if nextstr != times.next {
+				t.Errorf(`("%s").Next("%s") = "%s", got "%s"`, test.expr, times.from, times.next, nextstr)
+			}
+		}
+	}
+}
+
+
+
+
+/******************************************************************************/
 
 func TestZero(t *testing.T) {
 	from, _ := time.Parse("2006-01-02", "2013-08-31")

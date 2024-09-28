@@ -96,15 +96,15 @@ var (
 		"2190": 2190, "2191": 2191, "2192": 2192, "2193": 2193, "2194": 2194, "2195": 2195, "2196": 2196, "2197": 2197, "2198": 2198, "2199": 2199,
 	}
 	monthTokens = map[string]int{
-		`1`: 1, `jan`: 1, `january`: 1,
-		`2`: 2, `feb`: 2, `february`: 2,
-		`3`: 3, `mar`: 3, `march`: 3,
-		`4`: 4, `apr`: 4, `april`: 4,
-		`5`: 5, `may`: 5,
-		`6`: 6, `jun`: 6, `june`: 6,
-		`7`: 7, `jul`: 7, `july`: 7,
-		`8`: 8, `aug`: 8, `august`: 8,
-		`9`: 9, `sep`: 9, `september`: 9,
+		`1`: 1, `01`: 1, `jan`: 1, `january`: 1,
+		`2`: 2, `02`: 2, `feb`: 2, `february`: 2,
+		`3`: 3, `03`: 3, `mar`: 3, `march`: 3,
+		`4`: 4, `04`: 4, `apr`: 4, `april`: 4,
+		`5`: 5, `05`: 5, `may`: 5,
+		`6`: 6, `06`: 6, `jun`: 6, `june`: 6,
+		`7`: 7, `07`: 7, `jul`: 7, `july`: 7,
+		`8`: 8, `08`: 8, `aug`: 8, `august`: 8,
+		`9`: 9, `09`: 9, `sep`: 9, `september`: 9,
 		`10`: 10, `oct`: 10, `october`: 10,
 		`11`: 11, `nov`: 11, `november`: 11,
 		`12`: 12, `dec`: 12, `december`: 12,
@@ -366,7 +366,8 @@ func (expr *Expression) dowFieldHandler(s string) error {
 		case one:
 			populateOne(expr.daysOfWeek, directive.first)
 		case span:
-			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
+			populateManyWithOverflow(expr.daysOfWeek, directive.first, directive.last, directive.step,
+			dowDescriptor.min, dowDescriptor.max)
 		case all:
 			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
 			expr.daysOfWeekRestricted = false

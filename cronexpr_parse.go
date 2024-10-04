@@ -367,7 +367,7 @@ func (expr *Expression) dowFieldHandler(s string) error {
 			populateOne(expr.daysOfWeek, directive.first)
 		case span:
 			populateManyWithOverflow(expr.daysOfWeek, directive.first, directive.last, directive.step,
-			dowDescriptor.min, dowDescriptor.max)
+				dowDescriptor.min, dowDescriptor.max)
 		case all:
 			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
 			expr.daysOfWeekRestricted = false

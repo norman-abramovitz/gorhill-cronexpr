@@ -242,11 +242,12 @@ type predefinecrontest struct {
 	layout string
 	times  []crontimes
 }
+
 var predefinetests = []predefinecrontest{
 	{
 		"@midnight",
 		"Mon 2006-01-02 15:04:05",
-		[] crontimes {
+		[]crontimes{
 			{"2013-02-27 00:00:00", "Thu 2013-02-28 00:00:00"},
 			{"2013-02-28 00:00:00", "Fri 2013-03-01 00:00:00"},
 			{"2016-02-28 13:00:00", "Mon 2016-02-29 00:00:00"},
@@ -255,7 +256,7 @@ var predefinetests = []predefinecrontest{
 	{
 		"@hourly",
 		"Mon 2006-01-02 15:04:05",
-		[] crontimes {
+		[]crontimes{
 			{"2016-02-27 13:00:00", "Sat 2016-02-27 14:00:00"},
 			{"2016-02-29 04:00:00", "Mon 2016-02-29 05:00:00"},
 		},
@@ -263,7 +264,7 @@ var predefinetests = []predefinecrontest{
 	{
 		"@weekly",
 		"Mon 2006-01-02 15:04:05",
-		[] crontimes {
+		[]crontimes{
 			{"2013-02-27 13:00:00", "Sun 2013-03-03 00:00:00"},
 			{"2016-02-28 04:00:00", "Sun 2016-03-06 00:00:00"},
 		},
@@ -286,9 +287,6 @@ func TestPredefineExpressions(t *testing.T) {
 		}
 	}
 }
-
-
-
 
 /******************************************************************************/
 

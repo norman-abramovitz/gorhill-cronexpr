@@ -294,7 +294,6 @@ RECALCULATE:
 	}
 }
 
-
 /******************************************************************************/
 
 // NextN returns a slice of `n` closest time instants immediately following

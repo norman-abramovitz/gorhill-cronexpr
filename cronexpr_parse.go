@@ -229,7 +229,7 @@ var (
 	layoutLastDomAndOffset    = `^l-(%value%)$`
 	layoutWorkdom             = `^(%value%)w$`
 	layoutLastWorkdom         = `^lw$`
-	layoutDowOfLastWeek       = `^(%value%)l$`
+	layoutDowOfLastWeek       = `^(%value%)(l|#l)$`
 	layoutDowOfSpecificWeek   = `^(%value%)#([1-5])$`
 	fieldFinder               = regexp.MustCompile(`\S+`)
 	entryFinder               = regexp.MustCompile(`[^,]+`)
@@ -350,7 +350,7 @@ func (expr *Expression) dowFieldHandler(s string) error {
 		case none:
 			sdirective := s[directive.sbeg:directive.send]
 			snormal := strings.ToLower(sdirective)
-			// `5L`
+			// `5L` or `5#L`
 			pairs := makeLayoutRegexp(layoutDowOfLastWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
 			if len(pairs) > 0 {
 				populateOne(expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]]))

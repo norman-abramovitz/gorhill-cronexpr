@@ -1,5 +1,6 @@
 /*!
  * Copyright 2013 Raymond Hill
+ * Copyright 2026 Norman Abramovitz
  *
  * Project: github.com/gorhill/cronexpr
  * File: cronexpr.go

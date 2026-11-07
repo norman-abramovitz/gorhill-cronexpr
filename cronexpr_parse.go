@@ -118,6 +118,7 @@ type fieldDescriptor struct {
 	valuePattern string
 	atoi         func(string) int
 	cyclic       bool // a range may wrap past the maximum: `22-2`
+	layouts      *fieldLayouts
 }
 
 var (
@@ -420,12 +421,12 @@ func (expr *Expression) dowFieldHandler(s string) error {
 			sdirective := s[directive.sbeg:directive.send]
 			snormal := strings.ToLower(sdirective)
 			// `5L`
-			pairs := makeLayoutRegexp(layoutDowOfLastWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
+			pairs := dowDescriptor.layouts.dowOfLastWeek.FindStringSubmatchIndex(snormal)
 			if len(pairs) > 0 {
 				populateOne(&expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 			} else {
 				// `5#3`
-				pairs := makeLayoutRegexp(layoutDowOfSpecificWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
+				pairs := dowDescriptor.layouts.dowOfSpecificWeek.FindStringSubmatchIndex(snormal)
 				if len(pairs) > 0 {
 					populateOne(&expr.specificWeekDaysOfWeek, (dowDescriptor.atoi(snormal[pairs[4]:pairs[5]])-1)*7+(dowDescriptor.atoi(snormal[pairs[2]:pairs[3]])%7))
 				} else {
@@ -470,18 +471,18 @@ func (expr *Expression) domFieldHandler(s string) error {
 			sdirective := s[directive.sbeg:directive.send]
 			snormal := strings.ToLower(sdirective)
 			// `L`
-			if makeLayoutRegexp(layoutLastDom, domDescriptor.valuePattern).MatchString(snormal) {
+			if domDescriptor.layouts.lastDom.MatchString(snormal) {
 				expr.lastDayOfMonth = true
-			} else if pairs := makeLayoutRegexp(layoutLastDomOffset, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+			} else if pairs := domDescriptor.layouts.lastDomOffset.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 				// `L-3`
 				populateOne(&expr.lastDayOfMonthOffsets, atoi(snormal[pairs[2]:pairs[3]]))
 			} else {
 				// `LW`
-				if makeLayoutRegexp(layoutLastWorkdom, domDescriptor.valuePattern).MatchString(snormal) {
+				if domDescriptor.layouts.lastWorkdom.MatchString(snormal) {
 					expr.lastWorkdayOfMonth = true
 				} else {
 					// `15W`
-					pairs := makeLayoutRegexp(layoutWorkdom, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
+					pairs := domDescriptor.layouts.workdom.FindStringSubmatchIndex(snormal)
 					if len(pairs) > 0 {
 						populateOne(&expr.workdaysOfMonth, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 					} else {
@@ -598,7 +599,7 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 		snormal := strings.ToLower(entry)
 
 		// `*`
-		if makeLayoutRegexp(layoutWildcard, desc.valuePattern).MatchString(snormal) {
+		if desc.layouts.wildcard.MatchString(snormal) {
 			directive.kind = all
 			directive.first = desc.min
 			directive.last = desc.max
@@ -607,14 +608,14 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `5`
-		if makeLayoutRegexp(layoutValue, desc.valuePattern).MatchString(snormal) {
+		if desc.layouts.value.MatchString(snormal) {
 			directive.kind = one
 			directive.first = desc.atoi(snormal)
 			directives = append(directives, &directive)
 			continue
 		}
 		// `5-20`, or `22-2` wrapping around
-		pairs := makeLayoutRegexp(layoutRange, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs := desc.layouts.valueRange.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
@@ -624,7 +625,7 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `*/2`
-		pairs = makeLayoutRegexp(layoutWildcardAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs = desc.layouts.wildcardAndInterval.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.min
@@ -637,7 +638,7 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `5/2`
-		pairs = makeLayoutRegexp(layoutValueAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs = desc.layouts.valueAndInterval.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
@@ -650,7 +651,7 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `5-20/2`
-		pairs = makeLayoutRegexp(layoutRangeAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs = desc.layouts.rangeAndInterval.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
@@ -688,14 +689,14 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 // is not one.
 func (expr *Expression) parseHash(snormal string, desc fieldDescriptor, directive *cronDirective) (bool, error) {
 	first, last, step := desc.min, desc.max, 0
-	if makeLayoutRegexp(layoutHash, desc.valuePattern).MatchString(snormal) {
+	if desc.layouts.hash.MatchString(snormal) {
 		// whole field, one value
-	} else if pairs := makeLayoutRegexp(layoutHashAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+	} else if pairs := desc.layouts.hashAndInterval.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 		step, _ = strconv.Atoi(snormal[pairs[2]:pairs[3]])
-	} else if pairs := makeLayoutRegexp(layoutHashRange, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+	} else if pairs := desc.layouts.hashRange.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 		first = desc.atoi(snormal[pairs[2]:pairs[3]])
 		last = desc.atoi(snormal[pairs[4]:pairs[5]])
-	} else if pairs := makeLayoutRegexp(layoutHashRangeAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+	} else if pairs := desc.layouts.hashRangeAndInterval.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 		first = desc.atoi(snormal[pairs[2]:pairs[3]])
 		last = desc.atoi(snormal[pairs[4]:pairs[5]])
 		step, _ = strconv.Atoi(snormal[pairs[6]:pairs[7]])
@@ -719,38 +720,59 @@ func (expr *Expression) parseHash(snormal string, desc fieldDescriptor, directiv
 
 /******************************************************************************/
 
-// layoutKey names one compiled layout: the layout with a field's value
-// pattern in place of %value%.
-type layoutKey struct{ layout, value string }
+// fieldLayouts holds the layouts compiled for one field, with the field's
+// value pattern in place of %value%.
+type fieldLayouts struct {
+	wildcard             *regexp.Regexp // layoutWildcard
+	value                *regexp.Regexp // layoutValue
+	valueRange           *regexp.Regexp // layoutRange
+	wildcardAndInterval  *regexp.Regexp // layoutWildcardAndInterval
+	valueAndInterval     *regexp.Regexp // layoutValueAndInterval
+	rangeAndInterval     *regexp.Regexp // layoutRangeAndInterval
+	lastDom              *regexp.Regexp // layoutLastDom
+	lastDomOffset        *regexp.Regexp // layoutLastDomOffset
+	workdom              *regexp.Regexp // layoutWorkdom
+	lastWorkdom          *regexp.Regexp // layoutLastWorkdom
+	dowOfLastWeek        *regexp.Regexp // layoutDowOfLastWeek
+	dowOfSpecificWeek    *regexp.Regexp // layoutDowOfSpecificWeek
+	hash                 *regexp.Regexp // layoutHash
+	hashAndInterval      *regexp.Regexp // layoutHashAndInterval
+	hashRange            *regexp.Regexp // layoutHashRange
+	hashRangeAndInterval *regexp.Regexp // layoutHashRangeAndInterval
+}
 
-// layoutRegexp holds every layout compiled for every field, built once at
-// startup. It is only read afterwards, so parsing needs no lock.
-var layoutRegexp = func() map[layoutKey]*regexp.Regexp {
-	layouts := []string{
-		layoutWildcard, layoutValue, layoutRange, layoutWildcardAndInterval,
-		layoutValueAndInterval, layoutRangeAndInterval, layoutLastDom,
-		layoutLastDomOffset, layoutWorkdom, layoutLastWorkdom,
-		layoutDowOfLastWeek, layoutDowOfSpecificWeek, layoutHash,
-		layoutHashAndInterval, layoutHashRange, layoutHashRangeAndInterval,
-	}
-	fields := []fieldDescriptor{
-		secondDescriptor, minuteDescriptor, hourDescriptor, domDescriptor,
-		monthDescriptor, dowDescriptor, yearDescriptor,
-	}
-	table := make(map[layoutKey]*regexp.Regexp)
+// The layouts are compiled once at startup and only read afterwards, so
+// parsing needs no lock. A field reaches them without a lookup.
+func init() {
 	compiled := make(map[string]*regexp.Regexp) // fields share most patterns
-	for _, field := range fields {
-		for _, layout := range layouts {
-			pattern := strings.Replace(layout, `%value%`, field.valuePattern, -1)
+	for _, desc := range []*fieldDescriptor{
+		&secondDescriptor, &minuteDescriptor, &hourDescriptor, &domDescriptor,
+		&monthDescriptor, &dowDescriptor, &yearDescriptor,
+	} {
+		compile := func(layout string) *regexp.Regexp {
+			pattern := strings.Replace(layout, `%value%`, desc.valuePattern, -1)
 			if compiled[pattern] == nil {
 				compiled[pattern] = regexp.MustCompile(pattern)
 			}
-			table[layoutKey{layout, field.valuePattern}] = compiled[pattern]
+			return compiled[pattern]
+		}
+		desc.layouts = &fieldLayouts{
+			wildcard:             compile(layoutWildcard),
+			value:                compile(layoutValue),
+			valueRange:           compile(layoutRange),
+			wildcardAndInterval:  compile(layoutWildcardAndInterval),
+			valueAndInterval:     compile(layoutValueAndInterval),
+			rangeAndInterval:     compile(layoutRangeAndInterval),
+			lastDom:              compile(layoutLastDom),
+			lastDomOffset:        compile(layoutLastDomOffset),
+			workdom:              compile(layoutWorkdom),
+			lastWorkdom:          compile(layoutLastWorkdom),
+			dowOfLastWeek:        compile(layoutDowOfLastWeek),
+			dowOfSpecificWeek:    compile(layoutDowOfSpecificWeek),
+			hash:                 compile(layoutHash),
+			hashAndInterval:      compile(layoutHashAndInterval),
+			hashRange:            compile(layoutHashRange),
+			hashRangeAndInterval: compile(layoutHashRangeAndInterval),
 		}
 	}
-	return table
-}()
-
-func makeLayoutRegexp(layout, value string) *regexp.Regexp {
-	return layoutRegexp[layoutKey{layout, value}]
 }

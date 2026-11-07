@@ -406,6 +406,8 @@ var runtests = []runtest{
 	{"@every_start 1h", "", "UTC", "2026-01-01 00:20:00", false, []string{"2026-01-01 01:20:00 UTC"}},
 	{"@every_aligned 1h", "", "UTC", "2026-01-01 00:20:00", false, []string{"2026-01-01 01:00:00 UTC", "2026-01-01 02:00:00 UTC"}},
 	{"@triggered", "", "UTC", "2026-01-01 00:00:00", false, []string{"zero"}},
+	{"@every 1h", "", "UTC", "2026-01-01 01:00:00", true, []string{"2026-01-01 00:00:00 UTC", "2025-12-31 23:00:00 UTC"}},
+	{"@every_aligned 1h", "", "UTC", "2026-01-01 01:20:00", true, []string{"2026-01-01 01:00:00 UTC", "2026-01-01 00:00:00 UTC"}},
 
 	// Time zone prefix: the run is returned in the zone of the time given
 	{"TZ=America/New_York 0 9 * * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 14:00:00 UTC", "2026-01-02 14:00:00 UTC"}},
@@ -419,6 +421,26 @@ var runtests = []runtest{
 	{"0 0 * * H", "job-d", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-09 00:00:00 UTC"}},
 	{"0 0 * * H/2", "job-d", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-05 00:00:00 UTC", "2026-01-07 00:00:00 UTC", "2026-01-09 00:00:00 UTC"}},
 	{"0 H(22-2) * * *", "job-e", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 01:00:00 UTC", "2026-01-02 01:00:00 UTC"}},
+
+	// DST: a time skipped by a spring-forward gap runs once, shifted by the
+	// gap; a time repeated by a fall-back runs in both copies
+	{"30 2 * * *", "", "America/New_York", "2026-03-08 00:00:00", false, []string{"2026-03-08 03:30:00 EDT", "2026-03-09 02:30:00 EDT", "2026-03-10 02:30:00 EDT"}},
+	{"10,45 2,3 * * *", "", "America/New_York", "2026-03-08 01:00:00", false, []string{"2026-03-08 03:10:00 EDT", "2026-03-08 03:45:00 EDT", "2026-03-09 02:10:00 EDT", "2026-03-09 02:45:00 EDT"}},
+	{"20,40 2 * * *", "", "Australia/Lord_Howe", "2026-10-04 00:00:00", false, []string{"2026-10-04 02:40:00 +11", "2026-10-04 02:50:00 +11", "2026-10-05 02:20:00 +11", "2026-10-05 02:40:00 +11"}},
+	{"30 1 * * *", "", "America/New_York", "2026-11-01 00:00:00", false, []string{"2026-11-01 01:30:00 EDT", "2026-11-01 01:30:00 EST", "2026-11-02 01:30:00 EST"}},
+	{"*/15 * * * *", "", "America/New_York", "2026-11-01 01:40:00", false, []string{"2026-11-01 01:45:00 EDT", "2026-11-01 01:00:00 EST", "2026-11-01 01:15:00 EST", "2026-11-01 01:30:00 EST", "2026-11-01 01:45:00 EST", "2026-11-01 02:00:00 EST", "2026-11-01 02:15:00 EST"}},
+	{"30 2 * * *", "", "America/New_York", "2026-03-09 00:00:00", true, []string{"2026-03-08 03:30:00 EDT", "2026-03-07 02:30:00 EST"}},
+	{"30 1 * * *", "", "America/New_York", "2026-11-02 00:00:00", true, []string{"2026-11-01 01:30:00 EST", "2026-11-01 01:30:00 EDT", "2026-10-31 01:30:00 EDT"}},
+	{"*/15 * * * *", "", "America/New_York", "2026-11-01 01:20:00", true, []string{"2026-11-01 01:15:00 EDT", "2026-11-01 01:00:00 EDT", "2026-11-01 00:45:00 EDT", "2026-11-01 00:30:00 EDT", "2026-11-01 00:15:00 EDT", "2026-11-01 00:00:00 EDT", "2026-10-31 23:45:00 EDT"}},
+	{"20,40 2 * * *", "", "Australia/Lord_Howe", "2026-10-05 00:00:00", true, []string{"2026-10-04 02:50:00 +11", "2026-10-04 02:40:00 +11", "2026-10-03 02:40:00 +1030", "2026-10-03 02:20:00 +1030"}},
+
+	// Prev
+	{"0 0 * * MON", "", "UTC", "2013-01-08 00:00:00", true, []string{"2013-01-07 00:00:00 UTC", "2012-12-31 00:00:00 UTC"}},
+	{"17-43/5 * * * *", "", "UTC", "2013-01-01 01:00:00", true, []string{"2013-01-01 00:42:00 UTC", "2013-01-01 00:37:00 UTC", "2013-01-01 00:32:00 UTC"}},
+	{"0 0 L * *", "", "UTC", "2014-03-01 00:00:00", true, []string{"2014-02-28 00:00:00 UTC", "2014-01-31 00:00:00 UTC", "2013-12-31 00:00:00 UTC"}},
+	{"0 0 * * 6#5", "", "UTC", "2014-01-01 00:00:00", true, []string{"2013-11-30 00:00:00 UTC", "2013-08-31 00:00:00 UTC"}},
+	{"0 0 14W * *", "", "UTC", "2013-05-01 00:00:00", true, []string{"2013-04-15 00:00:00 UTC", "2013-03-14 00:00:00 UTC"}},
+	{"* * * * * 2050", "", "UTC", "2013-08-31 00:00:00", true, []string{"zero"}},
 }
 
 func TestRuns(t *testing.T) {
@@ -439,7 +461,11 @@ func TestRuns(t *testing.T) {
 		}
 		at, _ := time.ParseInLocation("2006-01-02 15:04:05", test.from, loc)
 		for i, want := range test.want {
-			at = expr.Next(at)
+			if test.prev {
+				at = expr.Prev(at)
+			} else {
+				at = expr.Next(at)
+			}
 			got := "zero"
 			if !at.IsZero() {
 				got = at.Format(runLayout)
@@ -470,5 +496,19 @@ func TestRejected(t *testing.T) {
 	}
 	if _, err := ParseWithHashKey("H * * * *", ""); err == nil {
 		t.Errorf(`ParseWithHashKey("H * * * *", "") returned no error`)
+	}
+}
+
+// A run's Prev and Next lead back to it, for every spec of crontests.
+func TestPrevUndoesNext(t *testing.T) {
+	for _, test := range crontests {
+		expr := MustParse(test.expr)
+		for _, times := range test.times {
+			from, _ := time.Parse("2006-01-02 15:04:05", times.from)
+			run := expr.Next(from)
+			if back := expr.Next(expr.Prev(run)); !back.Equal(run) {
+				t.Errorf("%q: Next(Prev(%s)) = %s", test.expr, run, back)
+			}
+		}
 	}
 }

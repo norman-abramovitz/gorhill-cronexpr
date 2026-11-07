@@ -33,8 +33,10 @@ var dowNormalizedOffsets = [][]int{
 
 /******************************************************************************/
 
-// nextWall returns the first time after `fromTime`, in its zone, whose wall
-// clock matches the cron expression `expr`.
+// nextWall returns the first wall-clock time after `fromTime` which matches
+// the cron expression `expr`. Wall-clock times are carried in UTC, where
+// every time of every day exists once, so the steps below never meet a
+// daylight saving change; nextExisting maps them to the zone.
 func (expr *Expression) nextWall(fromTime time.Time) time.Time {
 	// Since expr.nextSecond()-expr.nextMonth() expects that the
 	// supplied time stamp is a perfect match to the underlying cron

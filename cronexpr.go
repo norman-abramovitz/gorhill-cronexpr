@@ -195,7 +195,9 @@ func parse(cronLine string, expr *Expression) (*Expression, error) {
 //
 // The `time.Location` of the returned time instant is the same as that of
 // `fromTime`. The expression is matched against the wall clock of its TZ=
-// zone, or of `fromTime`'s zone when it has none.
+// zone, or of `fromTime`'s zone when it has none. A time skipped by a
+// daylight saving spring-forward gap runs once per gap, shifted by the length
+// of the gap; a time repeated by a fall-back runs in both copies.
 //
 // The zero value of time.Time is returned if no matching time instant exists
 // or if a `fromTime` is itself a zero value.
@@ -213,11 +215,52 @@ func (expr *Expression) Next(fromTime time.Time) time.Time {
 		return time.Time{}
 	}
 
-	next := expr.nextWall(fromTime.In(expr.zone(fromTime)))
+	t := fromTime.In(expr.zone(fromTime))
+	next := expr.nextExisting(t)
+	if run, ok := expr.nextGapRun(t, next); ok {
+		next = run
+	}
 	if next.IsZero() {
 		return next
 	}
 	return next.In(fromTime.Location())
+}
+
+// Prev returns the closest time instant before `fromTime`, and before the
+// second it falls in, which matches the cron expression `expr`. It is the
+// mirror of Next, and reports the same daylight saving runs.
+//
+// The zero value of time.Time is returned if no matching time instant exists
+// or if a `fromTime` is itself a zero value.
+func (expr *Expression) Prev(fromTime time.Time) time.Time {
+	// Special case
+	if fromTime.IsZero() {
+		return fromTime
+	}
+	switch expr.kind {
+	case interval:
+		// NOTE: as go-cron's ConstantDelaySchedule.Prev, which adds the
+		// fraction of a second back instead of dropping it
+		return fromTime.Add(-expr.interval + time.Duration(fromTime.Nanosecond()))
+	case aligned:
+		off := gridOffset(fromTime, expr.interval)
+		if off == 0 {
+			off = expr.interval
+		}
+		return fromTime.Add(-off)
+	case never:
+		return time.Time{}
+	}
+
+	t := fromTime.In(expr.zone(fromTime))
+	prev := expr.prevExisting(t)
+	if run, ok := expr.prevGapRun(t, prev); ok {
+		prev = run
+	}
+	if prev.IsZero() {
+		return prev
+	}
+	return prev.In(fromTime.Location())
 }
 
 // zone returns the zone whose wall clock the expression is matched against.

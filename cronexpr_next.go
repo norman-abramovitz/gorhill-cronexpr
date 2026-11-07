@@ -80,37 +80,37 @@ func (expr *Expression) nextWall(fromTime time.Time) time.Time {
 		return expr.nextMonth(fromTime)
 	}
 	if v != days[i] {
-		return expr.nextDayOfMonth(fromTime)
+		return expr.nextDayOfMonth(fromTime, days)
 	}
 	// hour
 	v = fromTime.Hour()
 	i = sort.SearchInts(expr.hourList, v)
 	if i == len(expr.hourList) {
-		return expr.nextDayOfMonth(fromTime)
+		return expr.nextDayOfMonth(fromTime, days)
 	}
 	if v != expr.hourList[i] {
-		return expr.nextHour(fromTime)
+		return expr.nextHour(fromTime, days)
 	}
 	// minute
 	v = fromTime.Minute()
 	i = sort.SearchInts(expr.minuteList, v)
 	if i == len(expr.minuteList) {
-		return expr.nextHour(fromTime)
+		return expr.nextHour(fromTime, days)
 	}
 	if v != expr.minuteList[i] {
-		return expr.nextMinute(fromTime)
+		return expr.nextMinute(fromTime, days)
 	}
 	// second
 	v = fromTime.Second()
 	i = sort.SearchInts(expr.secondList, v)
 	if i == len(expr.secondList) {
-		return expr.nextMinute(fromTime)
+		return expr.nextMinute(fromTime, days)
 	}
 
 	// If we reach this point, there is nothing better to do
 	// than to move to the next second
 
-	return expr.nextSecond(fromTime)
+	return expr.nextSecond(fromTime, days)
 }
 
 /******************************************************************************/
@@ -182,9 +182,8 @@ func (expr *Expression) nextMonth(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) nextDayOfMonth(t time.Time) time.Time {
-	// The days of t's month: the caller has matched its year and month
-	days := expr.calculateActualDaysOfMonth(t.Year(), int(t.Month()))
+// days are the days of t's month.
+func (expr *Expression) nextDayOfMonth(t time.Time, days []int) time.Time {
 	// Find index at which item in list is greater or equal to
 	// candidate day of month
 	i := sort.SearchInts(days, t.Day()+1)
@@ -205,12 +204,13 @@ func (expr *Expression) nextDayOfMonth(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) nextHour(t time.Time) time.Time {
+// days are the days of t's month.
+func (expr *Expression) nextHour(t time.Time, days []int) time.Time {
 	// Find index at which item in list is greater or equal to
 	// candidate hour
 	i := sort.SearchInts(expr.hourList, t.Hour()+1)
 	if i == len(expr.hourList) {
-		return expr.nextDayOfMonth(t)
+		return expr.nextDayOfMonth(t, days)
 	}
 
 	return time.Date(
@@ -226,12 +226,13 @@ func (expr *Expression) nextHour(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) nextMinute(t time.Time) time.Time {
+// days are the days of t's month.
+func (expr *Expression) nextMinute(t time.Time, days []int) time.Time {
 	// Find index at which item in list is greater or equal to
 	// candidate minute
 	i := sort.SearchInts(expr.minuteList, t.Minute()+1)
 	if i == len(expr.minuteList) {
-		return expr.nextHour(t)
+		return expr.nextHour(t, days)
 	}
 
 	return time.Date(
@@ -247,7 +248,8 @@ func (expr *Expression) nextMinute(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) nextSecond(t time.Time) time.Time {
+// days are the days of t's month.
+func (expr *Expression) nextSecond(t time.Time, days []int) time.Time {
 	// nextSecond() assumes all other fields are exactly matched
 	// to the cron expression
 
@@ -255,7 +257,7 @@ func (expr *Expression) nextSecond(t time.Time) time.Time {
 	// candidate second
 	i := sort.SearchInts(expr.secondList, t.Second()+1)
 	if i == len(expr.secondList) {
-		return expr.nextMinute(t)
+		return expr.nextMinute(t, days)
 	}
 
 	return time.Date(

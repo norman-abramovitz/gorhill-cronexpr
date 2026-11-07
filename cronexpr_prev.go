@@ -48,23 +48,23 @@ func (expr *Expression) prevWall(fromTime time.Time) time.Time {
 	v = fromTime.Day()
 	i = sort.SearchInts(days, v)
 	if i == len(days) || v != days[i] {
-		return expr.prevDayOfMonth(fromTime)
+		return expr.prevDayOfMonth(fromTime, days)
 	}
 	// hour
 	v = fromTime.Hour()
 	i = sort.SearchInts(expr.hourList, v)
 	if i == len(expr.hourList) || v != expr.hourList[i] {
-		return expr.prevHour(fromTime)
+		return expr.prevHour(fromTime, days)
 	}
 	// minute
 	v = fromTime.Minute()
 	i = sort.SearchInts(expr.minuteList, v)
 	if i == len(expr.minuteList) || v != expr.minuteList[i] {
-		return expr.prevMinute(fromTime)
+		return expr.prevMinute(fromTime, days)
 	}
 
 	// The second matches or not: the previous second is the answer
-	return expr.prevSecond(fromTime)
+	return expr.prevSecond(fromTime, days)
 }
 
 /******************************************************************************/
@@ -125,9 +125,8 @@ func (expr *Expression) prevMonth(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) prevDayOfMonth(t time.Time) time.Time {
-	// The days of t's month: the caller has matched its year and month
-	days := expr.calculateActualDaysOfMonth(t.Year(), int(t.Month()))
+// days are the days of t's month.
+func (expr *Expression) prevDayOfMonth(t time.Time, days []int) time.Time {
 	// Find index of the last item in list smaller than candidate day of month
 	i := sort.SearchInts(days, t.Day()) - 1
 	if i < 0 {
@@ -146,11 +145,12 @@ func (expr *Expression) prevDayOfMonth(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) prevHour(t time.Time) time.Time {
+// days are the days of t's month.
+func (expr *Expression) prevHour(t time.Time, days []int) time.Time {
 	// Find index of the last item in list smaller than candidate hour
 	i := sort.SearchInts(expr.hourList, t.Hour()) - 1
 	if i < 0 {
-		return expr.prevDayOfMonth(t)
+		return expr.prevDayOfMonth(t, days)
 	}
 	return time.Date(
 		t.Year(),
@@ -165,11 +165,12 @@ func (expr *Expression) prevHour(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) prevMinute(t time.Time) time.Time {
+// days are the days of t's month.
+func (expr *Expression) prevMinute(t time.Time, days []int) time.Time {
 	// Find index of the last item in list smaller than candidate minute
 	i := sort.SearchInts(expr.minuteList, t.Minute()) - 1
 	if i < 0 {
-		return expr.prevHour(t)
+		return expr.prevHour(t, days)
 	}
 	return time.Date(
 		t.Year(),
@@ -184,14 +185,15 @@ func (expr *Expression) prevMinute(t time.Time) time.Time {
 
 /******************************************************************************/
 
-func (expr *Expression) prevSecond(t time.Time) time.Time {
+// days are the days of t's month.
+func (expr *Expression) prevSecond(t time.Time, days []int) time.Time {
 	// prevSecond() assumes all other fields are exactly matched
 	// to the cron expression
 
 	// Find index of the last item in list smaller than candidate second
 	i := sort.SearchInts(expr.secondList, t.Second()) - 1
 	if i < 0 {
-		return expr.prevMinute(t)
+		return expr.prevMinute(t, days)
 	}
 	return time.Date(
 		t.Year(),

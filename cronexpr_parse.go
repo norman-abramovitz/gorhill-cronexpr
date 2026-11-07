@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -119,6 +118,7 @@ type fieldDescriptor struct {
 	valuePattern string
 	atoi         func(string) int
 	cyclic       bool // a range may wrap past the maximum: `22-2`
+	layouts      *fieldLayouts
 }
 
 var (
@@ -218,11 +218,14 @@ var (
 	layoutHashAndInterval      = `^h/(\d+)$`
 	layoutHashRange            = `^h\((%value%)-(%value%)\)$`
 	layoutHashRangeAndInterval = `^h\((%value%)-(%value%)\)/(\d+)$`
-	fieldFinder                = regexp.MustCompile(`\S+`)
-	entryFinder                = regexp.MustCompile(`[^,]+`)
-	layoutRegexp               = make(map[string]*regexp.Regexp)
-	layoutRegexpLock           sync.Mutex
 )
+
+// isFieldSpace reports whether r separates fields: the regexp `\s` set of
+// space, tab, newline, carriage return and form feed. strings.Fields would
+// also split on a vertical tab and Unicode spaces.
+func isFieldSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f'
+}
 
 /******************************************************************************/
 
@@ -328,7 +331,7 @@ func (expr *Expression) yearFieldHandler(s string) error {
 	if err != nil {
 		return err
 	}
-	values := make(map[int]bool)
+	values := make(map[int]bool) // a written year reaches 2147483647: no valueSet
 	for _, directive := range directives {
 		switch directive.kind {
 		case none:
@@ -351,7 +354,9 @@ func (expr *Expression) yearFieldHandler(s string) error {
 		if (directive.last-directive.first)/directive.step+1+len(values) > maxYears {
 			return fmt.Errorf("year field selects more than %d years: '%s'", maxYears, s)
 		}
-		populateSpan(values, directive.first, directive.last, directive.step, yearDescriptor)
+		for year := directive.first; year <= directive.last; year += directive.step {
+			values[year] = true
+		}
 	}
 	expr.yearList = toList(values)
 	return nil
@@ -382,29 +387,29 @@ func (expr *Expression) genericFieldHandler(s string, desc fieldDescriptor) ([]i
 	if err != nil {
 		return nil, err
 	}
-	values := make(map[int]bool)
+	var values valueSet
 	for _, directive := range directives {
 		switch directive.kind {
 		case none:
 			return nil, fmt.Errorf("syntax error in %s field: '%s'", desc.name, s[directive.sbeg:directive.send])
 		case one:
-			populateOne(values, directive.first)
+			populateOne(&values, directive.first)
 		case span:
-			populateSpan(values, directive.first, directive.last, directive.step, desc)
+			populateSpan(&values, directive.first, directive.last, directive.step, desc)
 		case all:
 			return desc.defaultList, nil
 		case picked:
-			populateList(values, directive.values)
+			populateList(&values, directive.values)
 		}
 	}
-	return toList(values), nil
+	return values.list(), nil
 }
 
 func (expr *Expression) dowFieldHandler(s string) error {
 	expr.daysOfWeekRestricted = true
-	expr.daysOfWeek = make(map[int]bool)
-	expr.lastWeekDaysOfWeek = make(map[int]bool)
-	expr.specificWeekDaysOfWeek = make(map[int]bool)
+	expr.daysOfWeek = valueSet{}
+	expr.lastWeekDaysOfWeek = valueSet{}
+	expr.specificWeekDaysOfWeek = valueSet{}
 
 	directives, err := genericFieldParse(s, dowDescriptor, expr)
 	if err != nil {
@@ -416,32 +421,32 @@ func (expr *Expression) dowFieldHandler(s string) error {
 			sdirective := s[directive.sbeg:directive.send]
 			snormal := strings.ToLower(sdirective)
 			// `5L`
-			pairs := makeLayoutRegexp(layoutDowOfLastWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
+			pairs := dowDescriptor.layouts.dowOfLastWeek.FindStringSubmatchIndex(snormal)
 			if len(pairs) > 0 {
-				populateOne(expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
+				populateOne(&expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 			} else {
 				// `5#3`
-				pairs := makeLayoutRegexp(layoutDowOfSpecificWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
+				pairs := dowDescriptor.layouts.dowOfSpecificWeek.FindStringSubmatchIndex(snormal)
 				if len(pairs) > 0 {
-					populateOne(expr.specificWeekDaysOfWeek, (dowDescriptor.atoi(snormal[pairs[4]:pairs[5]])-1)*7+(dowDescriptor.atoi(snormal[pairs[2]:pairs[3]])%7))
+					populateOne(&expr.specificWeekDaysOfWeek, (dowDescriptor.atoi(snormal[pairs[4]:pairs[5]])-1)*7+(dowDescriptor.atoi(snormal[pairs[2]:pairs[3]])%7))
 				} else {
 					return fmt.Errorf("syntax error in day-of-week field: '%s'", sdirective)
 				}
 			}
 		case one:
-			populateOne(expr.daysOfWeek, directive.first)
+			populateOne(&expr.daysOfWeek, directive.first)
 		case span:
-			populateSpan(expr.daysOfWeek, directive.first, directive.last, directive.step, dowDescriptor)
+			populateSpan(&expr.daysOfWeek, directive.first, directive.last, directive.step, dowDescriptor)
 		case all:
-			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
+			populateMany(&expr.daysOfWeek, directive.first, directive.last, directive.step)
 			expr.daysOfWeekRestricted = false
 		case picked:
-			populateList(expr.daysOfWeek, directive.values)
+			populateList(&expr.daysOfWeek, directive.values)
 		}
 	}
 	// Sunday is 0 and 7: fold 7 into 0 once the values are built
 	if expr.daysOfWeek[7] {
-		delete(expr.daysOfWeek, 7)
+		expr.daysOfWeek[7] = false
 		expr.daysOfWeek[0] = true
 	}
 	return nil
@@ -451,9 +456,9 @@ func (expr *Expression) domFieldHandler(s string) error {
 	expr.daysOfMonthRestricted = true
 	expr.lastDayOfMonth = false
 	expr.lastWorkdayOfMonth = false
-	expr.daysOfMonth = make(map[int]bool)           // days of month map
-	expr.workdaysOfMonth = make(map[int]bool)       // work days of month map
-	expr.lastDayOfMonthOffsets = make(map[int]bool) // days before the last day of month
+	expr.daysOfMonth = valueSet{}           // days of month
+	expr.workdaysOfMonth = valueSet{}       // work days of month
+	expr.lastDayOfMonthOffsets = valueSet{} // days before the last day of month
 
 	directives, err := genericFieldParse(s, domDescriptor, expr)
 	if err != nil {
@@ -466,34 +471,34 @@ func (expr *Expression) domFieldHandler(s string) error {
 			sdirective := s[directive.sbeg:directive.send]
 			snormal := strings.ToLower(sdirective)
 			// `L`
-			if makeLayoutRegexp(layoutLastDom, domDescriptor.valuePattern).MatchString(snormal) {
+			if domDescriptor.layouts.lastDom.MatchString(snormal) {
 				expr.lastDayOfMonth = true
-			} else if pairs := makeLayoutRegexp(layoutLastDomOffset, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+			} else if pairs := domDescriptor.layouts.lastDomOffset.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 				// `L-3`
-				populateOne(expr.lastDayOfMonthOffsets, atoi(snormal[pairs[2]:pairs[3]]))
+				populateOne(&expr.lastDayOfMonthOffsets, atoi(snormal[pairs[2]:pairs[3]]))
 			} else {
 				// `LW`
-				if makeLayoutRegexp(layoutLastWorkdom, domDescriptor.valuePattern).MatchString(snormal) {
+				if domDescriptor.layouts.lastWorkdom.MatchString(snormal) {
 					expr.lastWorkdayOfMonth = true
 				} else {
 					// `15W`
-					pairs := makeLayoutRegexp(layoutWorkdom, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
+					pairs := domDescriptor.layouts.workdom.FindStringSubmatchIndex(snormal)
 					if len(pairs) > 0 {
-						populateOne(expr.workdaysOfMonth, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
+						populateOne(&expr.workdaysOfMonth, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 					} else {
 						return fmt.Errorf("syntax error in day-of-month field: '%s'", sdirective)
 					}
 				}
 			}
 		case one:
-			populateOne(expr.daysOfMonth, directive.first)
+			populateOne(&expr.daysOfMonth, directive.first)
 		case span:
-			populateSpan(expr.daysOfMonth, directive.first, directive.last, directive.step, domDescriptor)
+			populateSpan(&expr.daysOfMonth, directive.first, directive.last, directive.step, domDescriptor)
 		case all:
-			populateMany(expr.daysOfMonth, directive.first, directive.last, directive.step)
+			populateMany(&expr.daysOfMonth, directive.first, directive.last, directive.step)
 			expr.daysOfMonthRestricted = false
 		case picked:
-			populateList(expr.daysOfMonth, directive.values)
+			populateList(&expr.daysOfMonth, directive.values)
 		}
 	}
 	return nil
@@ -501,17 +506,39 @@ func (expr *Expression) domFieldHandler(s string) error {
 
 /******************************************************************************/
 
-func populateOne(values map[int]bool, v int) {
+// valueSet marks the values a field selects: set[v] is true when v is
+// selected. It holds every field but the year: seconds and minutes go to
+// 59, and `5#3` is kept as week*7 + day of week, at most 34.
+type valueSet [60]bool
+
+// list returns the selected values, lowest first.
+func (set *valueSet) list() []int {
+	count := 0
+	for _, selected := range set {
+		if selected {
+			count++
+		}
+	}
+	list := make([]int, 0, count)
+	for v, selected := range set {
+		if selected {
+			list = append(list, v)
+		}
+	}
+	return list
+}
+
+func populateOne(values *valueSet, v int) {
 	values[v] = true
 }
 
-func populateMany(values map[int]bool, min, max, step int) {
+func populateMany(values *valueSet, min, max, step int) {
 	for i := min; i <= max; i += step {
 		values[i] = true
 	}
 }
 
-func populateList(values map[int]bool, list []int) {
+func populateList(values *valueSet, list []int) {
 	for _, v := range list {
 		values[v] = true
 	}
@@ -521,7 +548,7 @@ func populateList(values map[int]bool, list []int) {
 // past last, the range wraps around: `22-2` is 22, 23, 0, 1, 2, and the step
 // counts on across the wrap. A day of week step walks the seven distinct
 // days, so Sunday (0 and 7) counts once.
-func populateSpan(values map[int]bool, first, last, step int, desc fieldDescriptor) {
+func populateSpan(values *valueSet, first, last, step int, desc fieldDescriptor) {
 	if first <= last {
 		populateMany(values, first, last, step)
 		return
@@ -554,23 +581,25 @@ func toList(set map[int]bool) []int {
 // genericFieldParse reads the entries of a field. expr gives the hash for H;
 // it is nil for the year field, where H is a syntax error.
 func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cronDirective, error) {
-	// At least one entry must be present
-	indices := entryFinder.FindAllStringIndex(s, -1)
-	if len(indices) == 0 {
-		return nil, fmt.Errorf("%s field: missing directive", desc.name)
-	}
+	directives := make([]*cronDirective, 0, strings.Count(s, ",")+1)
 
-	directives := make([]*cronDirective, 0, len(indices))
-
-	for i := range indices {
-		directive := cronDirective{
-			sbeg: indices[i][0],
-			send: indices[i][1],
+	// Entries are split on commas; empty ones (`1,,2`) are skipped. sbeg and
+	// send keep each entry's place in s for error messages.
+	send := -1
+	for entry := range strings.SplitSeq(s, ",") {
+		sbeg := send + 1
+		send = sbeg + len(entry)
+		if entry == "" {
+			continue
 		}
-		snormal := strings.ToLower(s[indices[i][0]:indices[i][1]])
+		directive := cronDirective{
+			sbeg: sbeg,
+			send: send,
+		}
+		snormal := strings.ToLower(entry)
 
 		// `*`
-		if makeLayoutRegexp(layoutWildcard, desc.valuePattern).MatchString(snormal) {
+		if desc.layouts.wildcard.MatchString(snormal) {
 			directive.kind = all
 			directive.first = desc.min
 			directive.last = desc.max
@@ -579,14 +608,14 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `5`
-		if makeLayoutRegexp(layoutValue, desc.valuePattern).MatchString(snormal) {
+		if desc.layouts.value.MatchString(snormal) {
 			directive.kind = one
 			directive.first = desc.atoi(snormal)
 			directives = append(directives, &directive)
 			continue
 		}
 		// `5-20`, or `22-2` wrapping around
-		pairs := makeLayoutRegexp(layoutRange, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs := desc.layouts.valueRange.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
@@ -596,7 +625,7 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `*/2`
-		pairs = makeLayoutRegexp(layoutWildcardAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs = desc.layouts.wildcardAndInterval.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.min
@@ -609,7 +638,7 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `5/2`
-		pairs = makeLayoutRegexp(layoutValueAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs = desc.layouts.valueAndInterval.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
@@ -622,7 +651,7 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 			continue
 		}
 		// `5-20/2`
-		pairs = makeLayoutRegexp(layoutRangeAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal)
+		pairs = desc.layouts.rangeAndInterval.FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
 			directive.first = desc.atoi(snormal[pairs[2]:pairs[3]])
@@ -649,6 +678,10 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 		directive.kind = none
 		directives = append(directives, &directive)
 	}
+	// At least one entry must be present
+	if len(directives) == 0 {
+		return nil, fmt.Errorf("%s field: missing directive", desc.name)
+	}
 	return directives, nil
 }
 
@@ -656,14 +689,14 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 // is not one.
 func (expr *Expression) parseHash(snormal string, desc fieldDescriptor, directive *cronDirective) (bool, error) {
 	first, last, step := desc.min, desc.max, 0
-	if makeLayoutRegexp(layoutHash, desc.valuePattern).MatchString(snormal) {
+	if desc.layouts.hash.MatchString(snormal) {
 		// whole field, one value
-	} else if pairs := makeLayoutRegexp(layoutHashAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+	} else if pairs := desc.layouts.hashAndInterval.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 		step, _ = strconv.Atoi(snormal[pairs[2]:pairs[3]])
-	} else if pairs := makeLayoutRegexp(layoutHashRange, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+	} else if pairs := desc.layouts.hashRange.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 		first = desc.atoi(snormal[pairs[2]:pairs[3]])
 		last = desc.atoi(snormal[pairs[4]:pairs[5]])
-	} else if pairs := makeLayoutRegexp(layoutHashRangeAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+	} else if pairs := desc.layouts.hashRangeAndInterval.FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 		first = desc.atoi(snormal[pairs[2]:pairs[3]])
 		last = desc.atoi(snormal[pairs[4]:pairs[5]])
 		step, _ = strconv.Atoi(snormal[pairs[6]:pairs[7]])
@@ -687,15 +720,59 @@ func (expr *Expression) parseHash(snormal string, desc fieldDescriptor, directiv
 
 /******************************************************************************/
 
-func makeLayoutRegexp(layout, value string) *regexp.Regexp {
-	layoutRegexpLock.Lock()
-	defer layoutRegexpLock.Unlock()
+// fieldLayouts holds the layouts compiled for one field, with the field's
+// value pattern in place of %value%.
+type fieldLayouts struct {
+	wildcard             *regexp.Regexp // layoutWildcard
+	value                *regexp.Regexp // layoutValue
+	valueRange           *regexp.Regexp // layoutRange
+	wildcardAndInterval  *regexp.Regexp // layoutWildcardAndInterval
+	valueAndInterval     *regexp.Regexp // layoutValueAndInterval
+	rangeAndInterval     *regexp.Regexp // layoutRangeAndInterval
+	lastDom              *regexp.Regexp // layoutLastDom
+	lastDomOffset        *regexp.Regexp // layoutLastDomOffset
+	workdom              *regexp.Regexp // layoutWorkdom
+	lastWorkdom          *regexp.Regexp // layoutLastWorkdom
+	dowOfLastWeek        *regexp.Regexp // layoutDowOfLastWeek
+	dowOfSpecificWeek    *regexp.Regexp // layoutDowOfSpecificWeek
+	hash                 *regexp.Regexp // layoutHash
+	hashAndInterval      *regexp.Regexp // layoutHashAndInterval
+	hashRange            *regexp.Regexp // layoutHashRange
+	hashRangeAndInterval *regexp.Regexp // layoutHashRangeAndInterval
+}
 
-	layout = strings.Replace(layout, `%value%`, value, -1)
-	re := layoutRegexp[layout]
-	if re == nil {
-		re = regexp.MustCompile(layout)
-		layoutRegexp[layout] = re
+// The layouts are compiled once at startup and only read afterwards, so
+// parsing needs no lock. A field reaches them without a lookup.
+func init() {
+	compiled := make(map[string]*regexp.Regexp) // fields share most patterns
+	for _, desc := range []*fieldDescriptor{
+		&secondDescriptor, &minuteDescriptor, &hourDescriptor, &domDescriptor,
+		&monthDescriptor, &dowDescriptor, &yearDescriptor,
+	} {
+		compile := func(layout string) *regexp.Regexp {
+			pattern := strings.Replace(layout, `%value%`, desc.valuePattern, -1)
+			if compiled[pattern] == nil {
+				compiled[pattern] = regexp.MustCompile(pattern)
+			}
+			return compiled[pattern]
+		}
+		desc.layouts = &fieldLayouts{
+			wildcard:             compile(layoutWildcard),
+			value:                compile(layoutValue),
+			valueRange:           compile(layoutRange),
+			wildcardAndInterval:  compile(layoutWildcardAndInterval),
+			valueAndInterval:     compile(layoutValueAndInterval),
+			rangeAndInterval:     compile(layoutRangeAndInterval),
+			lastDom:              compile(layoutLastDom),
+			lastDomOffset:        compile(layoutLastDomOffset),
+			workdom:              compile(layoutWorkdom),
+			lastWorkdom:          compile(layoutLastWorkdom),
+			dowOfLastWeek:        compile(layoutDowOfLastWeek),
+			dowOfSpecificWeek:    compile(layoutDowOfSpecificWeek),
+			hash:                 compile(layoutHash),
+			hashAndInterval:      compile(layoutHashAndInterval),
+			hashRange:            compile(layoutHashRange),
+			hashRangeAndInterval: compile(layoutHashRangeAndInterval),
+		}
 	}
-	return re
 }

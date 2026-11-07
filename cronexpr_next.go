@@ -283,95 +283,114 @@ func (expr *Expression) calculateActualDaysOfMonth(year, month int) []int {
 		return allDays
 	}
 	if expr.daysOfMonthRestricted == false {
-		return toList(expr.daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth))
+		days := expr.daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth)
+		return days.list()
 	}
 	daysOfMonth := expr.daysOfMonthInMonth(firstDayOfMonth, lastDayOfMonth)
 	if expr.daysOfWeekRestricted == false {
-		return toList(daysOfMonth)
+		return daysOfMonth.list()
 	}
 	daysOfWeek := expr.daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth)
 	for v := range daysOfMonth {
 		if !daysOfWeek[v] {
-			delete(daysOfMonth, v)
+			daysOfMonth[v] = false
 		}
 	}
-	return toList(daysOfMonth)
+	return daysOfMonth.list()
 }
 
 // daysOfMonthInMonth returns the days of the month that the day-of-month
 // field selects.
-func (expr *Expression) daysOfMonthInMonth(firstDayOfMonth, lastDayOfMonth time.Time) map[int]bool {
-	actualDaysOfMonthMap := make(map[int]bool)
+func (expr *Expression) daysOfMonthInMonth(firstDayOfMonth, lastDayOfMonth time.Time) valueSet {
+	var actualDaysOfMonth valueSet
 	// Last day of month
 	if expr.lastDayOfMonth {
-		actualDaysOfMonthMap[lastDayOfMonth.Day()] = true
+		actualDaysOfMonth[lastDayOfMonth.Day()] = true
 	}
 	// Days before the last day of month: `L-3`
-	for v := range expr.lastDayOfMonthOffsets {
+	for v, selected := range expr.lastDayOfMonthOffsets {
+		if !selected {
+			continue
+		}
 		if v < lastDayOfMonth.Day() {
-			actualDaysOfMonthMap[lastDayOfMonth.Day()-v] = true
+			actualDaysOfMonth[lastDayOfMonth.Day()-v] = true
 		}
 	}
 	// Last work day of month
 	if expr.lastWorkdayOfMonth {
-		actualDaysOfMonthMap[workdayOfMonth(lastDayOfMonth, lastDayOfMonth)] = true
+		actualDaysOfMonth[workdayOfMonth(lastDayOfMonth, lastDayOfMonth)] = true
 	}
 	// Days of month
-	for v := range expr.daysOfMonth {
+	for v, selected := range expr.daysOfMonth {
+		if !selected {
+			continue
+		}
 		// Ignore days beyond end of month
 		if v <= lastDayOfMonth.Day() {
-			actualDaysOfMonthMap[v] = true
+			actualDaysOfMonth[v] = true
 		}
 	}
 	// Work days of month
 	// As per Wikipedia: month boundaries are not crossed.
-	for v := range expr.workdaysOfMonth {
+	for v, selected := range expr.workdaysOfMonth {
+		if !selected {
+			continue
+		}
 		// Ignore days beyond end of month
 		if v <= lastDayOfMonth.Day() {
-			actualDaysOfMonthMap[workdayOfMonth(firstDayOfMonth.AddDate(0, 0, v-1), lastDayOfMonth)] = true
+			actualDaysOfMonth[workdayOfMonth(firstDayOfMonth.AddDate(0, 0, v-1), lastDayOfMonth)] = true
 		}
 	}
-	return actualDaysOfMonthMap
+	return actualDaysOfMonth
 }
 
 // daysOfWeekInMonth returns the days of the month that the day-of-week
 // field selects.
-func (expr *Expression) daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth time.Time) map[int]bool {
-	actualDaysOfMonthMap := make(map[int]bool)
+func (expr *Expression) daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth time.Time) valueSet {
+	var actualDaysOfMonth valueSet
 	// How far first sunday is from first day of month
 	offset := 7 - int(firstDayOfMonth.Weekday())
 	// days of week
 	//  offset : (7 - day_of_week_of_1st_day_of_month)
 	//  target : 1 + (7 * week_of_month) + (offset + day_of_week) % 7
-	for v := range expr.daysOfWeek {
+	for v, selected := range expr.daysOfWeek {
+		if !selected {
+			continue
+		}
 		w := dowNormalizedOffsets[(offset+v)%7]
-		actualDaysOfMonthMap[w[0]] = true
-		actualDaysOfMonthMap[w[1]] = true
-		actualDaysOfMonthMap[w[2]] = true
-		actualDaysOfMonthMap[w[3]] = true
+		actualDaysOfMonth[w[0]] = true
+		actualDaysOfMonth[w[1]] = true
+		actualDaysOfMonth[w[2]] = true
+		actualDaysOfMonth[w[3]] = true
 		if len(w) > 4 && w[4] <= lastDayOfMonth.Day() {
-			actualDaysOfMonthMap[w[4]] = true
+			actualDaysOfMonth[w[4]] = true
 		}
 	}
 	// days of week of specific week in the month
 	//  offset : (7 - day_of_week_of_1st_day_of_month)
 	//  target : 1 + (7 * week_of_month) + (offset + day_of_week) % 7
-	for v := range expr.specificWeekDaysOfWeek {
+	for v, selected := range expr.specificWeekDaysOfWeek {
+		if !selected {
+			continue
+		}
 		v = 1 + 7*(v/7) + (offset+v)%7
 		if v <= lastDayOfMonth.Day() {
-			actualDaysOfMonthMap[v] = true
+			actualDaysOfMonth[v] = true
 		}
 	}
 	// Last days of week of the month
 	lastWeekOrigin := firstDayOfMonth.AddDate(0, 1, -7)
 	offset = 7 - int(lastWeekOrigin.Weekday())
-	for v := range expr.lastWeekDaysOfWeek {
+	for v, selected := range expr.lastWeekDaysOfWeek {
+		if !selected {
+			continue
+		}
 		v = lastWeekOrigin.Day() + (offset+v)%7
 		if v <= lastDayOfMonth.Day() {
-			actualDaysOfMonthMap[v] = true
+			actualDaysOfMonth[v] = true
 		}
 	}
-	return actualDaysOfMonthMap
+	return actualDaysOfMonth
 }
 
 func workdayOfMonth(targetDom, lastDom time.Time) int {

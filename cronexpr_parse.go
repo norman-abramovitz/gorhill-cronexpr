@@ -325,7 +325,7 @@ func (expr *Expression) yearFieldHandler(s string) error {
 	if err != nil {
 		return err
 	}
-	values := make(map[int]bool)
+	values := make(map[int]bool) // a written year reaches 2147483647: no valueSet
 	for _, directive := range directives {
 		switch directive.kind {
 		case none:
@@ -348,7 +348,9 @@ func (expr *Expression) yearFieldHandler(s string) error {
 		if (directive.last-directive.first)/directive.step+1+len(values) > maxYears {
 			return fmt.Errorf("year field selects more than %d years: '%s'", maxYears, s)
 		}
-		populateSpan(values, directive.first, directive.last, directive.step, yearDescriptor)
+		for year := directive.first; year <= directive.last; year += directive.step {
+			values[year] = true
+		}
 	}
 	expr.yearList = toList(values)
 	return nil
@@ -379,29 +381,29 @@ func (expr *Expression) genericFieldHandler(s string, desc fieldDescriptor) ([]i
 	if err != nil {
 		return nil, err
 	}
-	values := make(map[int]bool)
+	var values valueSet
 	for _, directive := range directives {
 		switch directive.kind {
 		case none:
 			return nil, fmt.Errorf("syntax error in %s field: '%s'", desc.name, s[directive.sbeg:directive.send])
 		case one:
-			populateOne(values, directive.first)
+			populateOne(&values, directive.first)
 		case span:
-			populateSpan(values, directive.first, directive.last, directive.step, desc)
+			populateSpan(&values, directive.first, directive.last, directive.step, desc)
 		case all:
 			return desc.defaultList, nil
 		case picked:
-			populateList(values, directive.values)
+			populateList(&values, directive.values)
 		}
 	}
-	return toList(values), nil
+	return values.list(), nil
 }
 
 func (expr *Expression) dowFieldHandler(s string) error {
 	expr.daysOfWeekRestricted = true
-	expr.daysOfWeek = make(map[int]bool)
-	expr.lastWeekDaysOfWeek = make(map[int]bool)
-	expr.specificWeekDaysOfWeek = make(map[int]bool)
+	expr.daysOfWeek = valueSet{}
+	expr.lastWeekDaysOfWeek = valueSet{}
+	expr.specificWeekDaysOfWeek = valueSet{}
 
 	directives, err := genericFieldParse(s, dowDescriptor, expr)
 	if err != nil {
@@ -415,30 +417,30 @@ func (expr *Expression) dowFieldHandler(s string) error {
 			// `5L`
 			pairs := makeLayoutRegexp(layoutDowOfLastWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
 			if len(pairs) > 0 {
-				populateOne(expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
+				populateOne(&expr.lastWeekDaysOfWeek, dowDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 			} else {
 				// `5#3`
 				pairs := makeLayoutRegexp(layoutDowOfSpecificWeek, dowDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
 				if len(pairs) > 0 {
-					populateOne(expr.specificWeekDaysOfWeek, (dowDescriptor.atoi(snormal[pairs[4]:pairs[5]])-1)*7+(dowDescriptor.atoi(snormal[pairs[2]:pairs[3]])%7))
+					populateOne(&expr.specificWeekDaysOfWeek, (dowDescriptor.atoi(snormal[pairs[4]:pairs[5]])-1)*7+(dowDescriptor.atoi(snormal[pairs[2]:pairs[3]])%7))
 				} else {
 					return fmt.Errorf("syntax error in day-of-week field: '%s'", sdirective)
 				}
 			}
 		case one:
-			populateOne(expr.daysOfWeek, directive.first)
+			populateOne(&expr.daysOfWeek, directive.first)
 		case span:
-			populateSpan(expr.daysOfWeek, directive.first, directive.last, directive.step, dowDescriptor)
+			populateSpan(&expr.daysOfWeek, directive.first, directive.last, directive.step, dowDescriptor)
 		case all:
-			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
+			populateMany(&expr.daysOfWeek, directive.first, directive.last, directive.step)
 			expr.daysOfWeekRestricted = false
 		case picked:
-			populateList(expr.daysOfWeek, directive.values)
+			populateList(&expr.daysOfWeek, directive.values)
 		}
 	}
 	// Sunday is 0 and 7: fold 7 into 0 once the values are built
 	if expr.daysOfWeek[7] {
-		delete(expr.daysOfWeek, 7)
+		expr.daysOfWeek[7] = false
 		expr.daysOfWeek[0] = true
 	}
 	return nil
@@ -448,9 +450,9 @@ func (expr *Expression) domFieldHandler(s string) error {
 	expr.daysOfMonthRestricted = true
 	expr.lastDayOfMonth = false
 	expr.lastWorkdayOfMonth = false
-	expr.daysOfMonth = make(map[int]bool)           // days of month map
-	expr.workdaysOfMonth = make(map[int]bool)       // work days of month map
-	expr.lastDayOfMonthOffsets = make(map[int]bool) // days before the last day of month
+	expr.daysOfMonth = valueSet{}           // days of month
+	expr.workdaysOfMonth = valueSet{}       // work days of month
+	expr.lastDayOfMonthOffsets = valueSet{} // days before the last day of month
 
 	directives, err := genericFieldParse(s, domDescriptor, expr)
 	if err != nil {
@@ -467,7 +469,7 @@ func (expr *Expression) domFieldHandler(s string) error {
 				expr.lastDayOfMonth = true
 			} else if pairs := makeLayoutRegexp(layoutLastDomOffset, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
 				// `L-3`
-				populateOne(expr.lastDayOfMonthOffsets, atoi(snormal[pairs[2]:pairs[3]]))
+				populateOne(&expr.lastDayOfMonthOffsets, atoi(snormal[pairs[2]:pairs[3]]))
 			} else {
 				// `LW`
 				if makeLayoutRegexp(layoutLastWorkdom, domDescriptor.valuePattern).MatchString(snormal) {
@@ -476,21 +478,21 @@ func (expr *Expression) domFieldHandler(s string) error {
 					// `15W`
 					pairs := makeLayoutRegexp(layoutWorkdom, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal)
 					if len(pairs) > 0 {
-						populateOne(expr.workdaysOfMonth, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
+						populateOne(&expr.workdaysOfMonth, domDescriptor.atoi(snormal[pairs[2]:pairs[3]]))
 					} else {
 						return fmt.Errorf("syntax error in day-of-month field: '%s'", sdirective)
 					}
 				}
 			}
 		case one:
-			populateOne(expr.daysOfMonth, directive.first)
+			populateOne(&expr.daysOfMonth, directive.first)
 		case span:
-			populateSpan(expr.daysOfMonth, directive.first, directive.last, directive.step, domDescriptor)
+			populateSpan(&expr.daysOfMonth, directive.first, directive.last, directive.step, domDescriptor)
 		case all:
-			populateMany(expr.daysOfMonth, directive.first, directive.last, directive.step)
+			populateMany(&expr.daysOfMonth, directive.first, directive.last, directive.step)
 			expr.daysOfMonthRestricted = false
 		case picked:
-			populateList(expr.daysOfMonth, directive.values)
+			populateList(&expr.daysOfMonth, directive.values)
 		}
 	}
 	return nil
@@ -498,17 +500,39 @@ func (expr *Expression) domFieldHandler(s string) error {
 
 /******************************************************************************/
 
-func populateOne(values map[int]bool, v int) {
+// valueSet marks the values a field selects: set[v] is true when v is
+// selected. It holds every field but the year: seconds and minutes go to
+// 59, and `5#3` is kept as week*7 + day of week, at most 34.
+type valueSet [60]bool
+
+// list returns the selected values, lowest first.
+func (set *valueSet) list() []int {
+	count := 0
+	for _, selected := range set {
+		if selected {
+			count++
+		}
+	}
+	list := make([]int, 0, count)
+	for v, selected := range set {
+		if selected {
+			list = append(list, v)
+		}
+	}
+	return list
+}
+
+func populateOne(values *valueSet, v int) {
 	values[v] = true
 }
 
-func populateMany(values map[int]bool, min, max, step int) {
+func populateMany(values *valueSet, min, max, step int) {
 	for i := min; i <= max; i += step {
 		values[i] = true
 	}
 }
 
-func populateList(values map[int]bool, list []int) {
+func populateList(values *valueSet, list []int) {
 	for _, v := range list {
 		values[v] = true
 	}
@@ -518,7 +542,7 @@ func populateList(values map[int]bool, list []int) {
 // past last, the range wraps around: `22-2` is 22, 23, 0, 1, 2, and the step
 // counts on across the wrap. A day of week step walks the seven distinct
 // days, so Sunday (0 and 7) counts once.
-func populateSpan(values map[int]bool, first, last, step int, desc fieldDescriptor) {
+func populateSpan(values *valueSet, first, last, step int, desc fieldDescriptor) {
 	if first <= last {
 		populateMany(values, first, last, step)
 		return

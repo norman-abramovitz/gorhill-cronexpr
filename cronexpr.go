@@ -35,17 +35,17 @@ type Expression struct {
 	secondList             []int
 	minuteList             []int
 	hourList               []int
-	daysOfMonth            map[int]bool
-	workdaysOfMonth        map[int]bool
+	daysOfMonth            valueSet
+	workdaysOfMonth        valueSet
 	lastDayOfMonth         bool
-	lastDayOfMonthOffsets  map[int]bool
+	lastDayOfMonthOffsets  valueSet
 	lastWorkdayOfMonth     bool
 	daysOfMonthRestricted  bool
 	actualDaysOfMonthList  []int
 	monthList              []int
-	daysOfWeek             map[int]bool
-	specificWeekDaysOfWeek map[int]bool
-	lastWeekDaysOfWeek     map[int]bool
+	daysOfWeek             valueSet
+	specificWeekDaysOfWeek valueSet
+	lastWeekDaysOfWeek     valueSet
 	daysOfWeekRestricted   bool
 	yearList               []int
 }

@@ -34,6 +34,12 @@ Number of resulting time values to output.
 
 Default is 1.
 
+`-p`:
+
+Output the time values before the `-t` time instead of after it, newest first. The header line reads `-` instead of `+`.
+
+Default is off.
+
 `-t`:
 
 Whole or partial RFC3339 time value (i.e. `2006-01-02T15:04:05Z07:00`) against which the cron expression is evaluated. Examples of valid values include (assuming EST time zone):

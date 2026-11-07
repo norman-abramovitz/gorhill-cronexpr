@@ -32,6 +32,7 @@ var (
 	hashKey       string
 	outTimeCount  uint
 	outTimeLayout string
+	prevTimes     bool
 )
 
 /******************************************************************************/
@@ -43,6 +44,7 @@ func main() {
 	flag.StringVar(&inTimeStr, "t", "", `whole or partial RFC3339 time value (i.e. "2006-01-02T15:04:05Z07:00") against which the cron expression is evaluated, now if not present`)
 	flag.StringVar(&hashKey, "k", "", `hash key from which H picks its values (e.g. a job name); needed for an expression with H`)
 	flag.UintVar(&outTimeCount, "n", 1, `number of resulting time values to output`)
+	flag.BoolVar(&prevTimes, "p", false, `output the time values before the -t time instead of after it, newest first`)
 	flag.StringVar(&outTimeLayout, "l", "Mon, 02 Jan 2006 15:04:05 MST", `Go-compliant time layout to use for outputting time value(s), see <http://golang.org/pkg/time/#pkg-constants>`)
 	flag.Parse()
 
@@ -105,13 +107,17 @@ func main() {
 
 	// Anything on the output which starts with '#' can be ignored if the caller
 	// is interested only in the time values. There is only one time
-	// value per line, and they are always in chronological ascending order.
-	fmt.Printf("# \"%s\" + \"%s\" =\n", cronStr, inTime.Format(time.RFC3339))
+	// value per line, in chronological ascending order, or descending with -p.
+	sign, find := "+", expr.NextN
+	if prevTimes {
+		sign, find = "-", expr.PrevN
+	}
+	fmt.Printf("# \"%s\" %s \"%s\" =\n", cronStr, sign, inTime.Format(time.RFC3339))
 
 	if outTimeCount < 1 {
 		outTimeCount = 1
 	}
-	outTimes := expr.NextN(inTime, outTimeCount)
+	outTimes := find(inTime, outTimeCount)
 	for _, outTime := range outTimes {
 		fmt.Println(outTime.Format(outTimeLayout))
 	}

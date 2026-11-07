@@ -536,6 +536,34 @@ func TestPrevN(t *testing.T) {
 
 /******************************************************************************/
 
+// One Expression may be shared: Next and Prev from several goroutines must
+// give the runs they give alone. Run with -race.
+func TestConcurrentNextPrev(t *testing.T) {
+	expr := MustParse("0 0 L * *")
+	from, _ := time.Parse("2006-01-02", "2013-01-15")
+	want := expr.NextN(from, 24)
+	done := make(chan []time.Time)
+	for g := 0; g < 8; g++ {
+		go func() {
+			got := make([]time.Time, 0, len(want))
+			for t := from; len(got) < len(want); {
+				t = expr.Next(t)
+				expr.Prev(t)
+				got = append(got, t)
+			}
+			done <- got
+		}()
+	}
+	for g := 0; g < 8; g++ {
+		got := <-done
+		for i := range want {
+			if !got[i].Equal(want[i]) {
+				t.Fatalf("run %d: want %s, got %s", i+1, want[i], got[i])
+			}
+		}
+	}
+}
+
 // Parse from several goroutines at once. Run with -race.
 func TestConcurrentParse(t *testing.T) {
 	specs := []string{"*/5 9-17 * * MON-FRI", "0 0 L * *", "0 12 15W * ?", "H H(0-6) * * 5#L", "TZ=Europe/Paris 30 2 * * *"}

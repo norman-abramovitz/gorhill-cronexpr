@@ -41,7 +41,6 @@ type Expression struct {
 	lastDayOfMonthOffsets  valueSet
 	lastWorkdayOfMonth     bool
 	daysOfMonthRestricted  bool
-	actualDaysOfMonthList  []int
 	monthList              []int
 	daysOfWeek             valueSet
 	specificWeekDaysOfWeek valueSet

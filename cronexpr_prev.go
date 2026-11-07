@@ -42,12 +42,12 @@ func (expr *Expression) prevWall(fromTime time.Time) time.Time {
 		return expr.prevMonth(fromTime)
 	}
 
-	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(fromTime.Year(), int(fromTime.Month()))
+	days := expr.calculateActualDaysOfMonth(fromTime.Year(), int(fromTime.Month()))
 
 	// day of month
 	v = fromTime.Day()
-	i = sort.SearchInts(expr.actualDaysOfMonthList, v)
-	if i == len(expr.actualDaysOfMonthList) || v != expr.actualDaysOfMonthList[i] {
+	i = sort.SearchInts(days, v)
+	if i == len(days) || v != days[i] {
 		return expr.prevDayOfMonth(fromTime)
 	}
 	// hour
@@ -84,14 +84,14 @@ func (expr *Expression) prevYear(t time.Time) time.Time {
 	}
 	// Year changed, need to recalculate actual days of month
 	month := last(expr.monthList)
-	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(expr.yearList[i], month)
-	if len(expr.actualDaysOfMonthList) == 0 {
+	days := expr.calculateActualDaysOfMonth(expr.yearList[i], month)
+	if len(days) == 0 {
 		return expr.prevMonth(time.Date(expr.yearList[i], time.Month(month), 1, 0, 0, 0, 0, t.Location()))
 	}
 	return time.Date(
 		expr.yearList[i],
 		time.Month(month),
-		last(expr.actualDaysOfMonthList),
+		last(days),
 		last(expr.hourList),
 		last(expr.minuteList),
 		last(expr.secondList),
@@ -108,14 +108,14 @@ func (expr *Expression) prevMonth(t time.Time) time.Time {
 		return expr.prevYear(t)
 	}
 	// Month changed, need to recalculate actual days of month
-	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(t.Year(), expr.monthList[i])
-	if len(expr.actualDaysOfMonthList) == 0 {
+	days := expr.calculateActualDaysOfMonth(t.Year(), expr.monthList[i])
+	if len(days) == 0 {
 		return expr.prevMonth(time.Date(t.Year(), time.Month(expr.monthList[i]), 1, 0, 0, 0, 0, t.Location()))
 	}
 	return time.Date(
 		t.Year(),
 		time.Month(expr.monthList[i]),
-		last(expr.actualDaysOfMonthList),
+		last(days),
 		last(expr.hourList),
 		last(expr.minuteList),
 		last(expr.secondList),
@@ -126,15 +126,17 @@ func (expr *Expression) prevMonth(t time.Time) time.Time {
 /******************************************************************************/
 
 func (expr *Expression) prevDayOfMonth(t time.Time) time.Time {
+	// The days of t's month: the caller has matched its year and month
+	days := expr.calculateActualDaysOfMonth(t.Year(), int(t.Month()))
 	// Find index of the last item in list smaller than candidate day of month
-	i := sort.SearchInts(expr.actualDaysOfMonthList, t.Day()) - 1
+	i := sort.SearchInts(days, t.Day()) - 1
 	if i < 0 {
 		return expr.prevMonth(t)
 	}
 	return time.Date(
 		t.Year(),
 		t.Month(),
-		expr.actualDaysOfMonthList[i],
+		days[i],
 		last(expr.hourList),
 		last(expr.minuteList),
 		last(expr.secondList),

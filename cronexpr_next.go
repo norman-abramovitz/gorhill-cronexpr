@@ -68,18 +68,18 @@ func (expr *Expression) nextWall(fromTime time.Time) time.Time {
 		return expr.nextMonth(fromTime)
 	}
 
-	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(fromTime.Year(), int(fromTime.Month()))
-	if len(expr.actualDaysOfMonthList) == 0 {
+	days := expr.calculateActualDaysOfMonth(fromTime.Year(), int(fromTime.Month()))
+	if len(days) == 0 {
 		return expr.nextMonth(fromTime)
 	}
 
 	// day of month
 	v = fromTime.Day()
-	i = sort.SearchInts(expr.actualDaysOfMonthList, v)
-	if i == len(expr.actualDaysOfMonthList) {
+	i = sort.SearchInts(days, v)
+	if i == len(days) {
 		return expr.nextMonth(fromTime)
 	}
-	if v != expr.actualDaysOfMonthList[i] {
+	if v != days[i] {
 		return expr.nextDayOfMonth(fromTime)
 	}
 	// hour
@@ -123,8 +123,8 @@ func (expr *Expression) nextYear(t time.Time) time.Time {
 		return time.Time{}
 	}
 	// Year changed, need to recalculate actual days of month
-	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(expr.yearList[i], expr.monthList[0])
-	if len(expr.actualDaysOfMonthList) == 0 {
+	days := expr.calculateActualDaysOfMonth(expr.yearList[i], expr.monthList[0])
+	if len(days) == 0 {
 		return expr.nextMonth(time.Date(
 			expr.yearList[i],
 			time.Month(expr.monthList[0]),
@@ -138,7 +138,7 @@ func (expr *Expression) nextYear(t time.Time) time.Time {
 	return time.Date(
 		expr.yearList[i],
 		time.Month(expr.monthList[0]),
-		expr.actualDaysOfMonthList[0],
+		days[0],
 		expr.hourList[0],
 		expr.minuteList[0],
 		expr.secondList[0],
@@ -156,8 +156,8 @@ func (expr *Expression) nextMonth(t time.Time) time.Time {
 		return expr.nextYear(t)
 	}
 	// Month changed, need to recalculate actual days of month
-	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(t.Year(), expr.monthList[i])
-	if len(expr.actualDaysOfMonthList) == 0 {
+	days := expr.calculateActualDaysOfMonth(t.Year(), expr.monthList[i])
+	if len(days) == 0 {
 		return expr.nextMonth(time.Date(
 			t.Year(),
 			time.Month(expr.monthList[i]),
@@ -172,7 +172,7 @@ func (expr *Expression) nextMonth(t time.Time) time.Time {
 	return time.Date(
 		t.Year(),
 		time.Month(expr.monthList[i]),
-		expr.actualDaysOfMonthList[0],
+		days[0],
 		expr.hourList[0],
 		expr.minuteList[0],
 		expr.secondList[0],
@@ -183,17 +183,19 @@ func (expr *Expression) nextMonth(t time.Time) time.Time {
 /******************************************************************************/
 
 func (expr *Expression) nextDayOfMonth(t time.Time) time.Time {
+	// The days of t's month: the caller has matched its year and month
+	days := expr.calculateActualDaysOfMonth(t.Year(), int(t.Month()))
 	// Find index at which item in list is greater or equal to
 	// candidate day of month
-	i := sort.SearchInts(expr.actualDaysOfMonthList, t.Day()+1)
-	if i == len(expr.actualDaysOfMonthList) {
+	i := sort.SearchInts(days, t.Day()+1)
+	if i == len(days) {
 		return expr.nextMonth(t)
 	}
 
 	return time.Date(
 		t.Year(),
 		t.Month(),
-		expr.actualDaysOfMonthList[i],
+		days[i],
 		expr.hourList[0],
 		expr.minuteList[0],
 		expr.secondList[0],

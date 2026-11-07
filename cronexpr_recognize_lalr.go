@@ -2,7 +2,10 @@
 
 package cronexpr
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 //go:generate go tool goyacc -l -p lalr -v /dev/null -o cronexpr_lalr.go cronexpr_lalr.y
 
@@ -11,12 +14,20 @@ import "strings"
 func recognizeField(s string, desc *fieldDescriptor, entries []fieldEntry) ([]fieldEntry, error) {
 	s = strings.ToLower(s)
 	lex := &lalrFieldLexer{fieldLexer: newFieldLexer(s, desc), desc: desc, entries: entries}
-	lalrParse(lex)
+	parser := lalrParsers.Get().(lalrParser)
+	parser.Parse(lex)
+	lalrParsers.Put(parser)
 	if lex.failed {
 		return nil, entrySyntaxError(s, lex.errPos, desc)
 	}
 	return lex.entries, nil
 }
+
+// lalrParsers keeps parsers to use again. goyacc's parser holds its stack:
+// 16 symbols of about 140 bytes each, as a %union is a struct holding every
+// member. A new one for each field was two thirds of the bytes Parse
+// allocated, and most of its time went to collecting them.
+var lalrParsers = sync.Pool{New: func() any { return lalrNewParser() }}
 
 // lalrFieldLexer hands the parser its tokens and keeps the entries the
 // grammar's actions find.

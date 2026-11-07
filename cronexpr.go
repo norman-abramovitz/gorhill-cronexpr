@@ -18,6 +18,7 @@ package cronexpr
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -35,17 +36,16 @@ type Expression struct {
 	secondList             []int
 	minuteList             []int
 	hourList               []int
-	daysOfMonth            map[int]bool
-	workdaysOfMonth        map[int]bool
+	daysOfMonth            valueSet
+	workdaysOfMonth        valueSet
 	lastDayOfMonth         bool
-	lastDayOfMonthOffsets  map[int]bool
+	lastDayOfMonthOffsets  valueSet
 	lastWorkdayOfMonth     bool
 	daysOfMonthRestricted  bool
-	actualDaysOfMonthList  []int
 	monthList              []int
-	daysOfWeek             map[int]bool
-	specificWeekDaysOfWeek map[int]bool
-	lastWeekDaysOfWeek     map[int]bool
+	daysOfWeek             valueSet
+	specificWeekDaysOfWeek valueSet
+	lastWeekDaysOfWeek     valueSet
 	daysOfWeekRestricted   bool
 	yearList               []int
 }
@@ -117,8 +117,8 @@ func parse(cronLine string, expr *Expression) (*Expression, error) {
 	// Maybe one of the built-in aliases is being used
 	cron := cronNormalizer.Replace(rest)
 
-	indices := fieldFinder.FindAllStringIndex(cron, -1)
-	fieldCount := len(indices)
+	fields := strings.FieldsFunc(cron, isFieldSpace)
+	fieldCount := len(fields)
 	if fieldCount < 5 {
 		return nil, fmt.Errorf("missing field(s)")
 	}
@@ -131,8 +131,8 @@ func parse(cronLine string, expr *Expression) (*Expression, error) {
 
 	// second field (optional): with seven fields, or with six when the
 	// sixth is not a year
-	if fieldCount == 7 || (fieldCount == 6 && !looksLikeYear(cron[indices[5][0]:indices[5][1]])) {
-		err = expr.secondFieldHandler(cron[indices[field][0]:indices[field][1]])
+	if fieldCount == 7 || (fieldCount == 6 && !looksLikeYear(fields[5])) {
+		err = expr.secondFieldHandler(fields[field])
 		if err != nil {
 			return nil, err
 		}
@@ -142,35 +142,35 @@ func parse(cronLine string, expr *Expression) (*Expression, error) {
 	}
 
 	// minute field
-	err = expr.minuteFieldHandler(cron[indices[field][0]:indices[field][1]])
+	err = expr.minuteFieldHandler(fields[field])
 	if err != nil {
 		return nil, err
 	}
 	field += 1
 
 	// hour field
-	err = expr.hourFieldHandler(cron[indices[field][0]:indices[field][1]])
+	err = expr.hourFieldHandler(fields[field])
 	if err != nil {
 		return nil, err
 	}
 	field += 1
 
 	// day of month field
-	err = expr.domFieldHandler(cron[indices[field][0]:indices[field][1]])
+	err = expr.domFieldHandler(fields[field])
 	if err != nil {
 		return nil, err
 	}
 	field += 1
 
 	// month field
-	err = expr.monthFieldHandler(cron[indices[field][0]:indices[field][1]])
+	err = expr.monthFieldHandler(fields[field])
 	if err != nil {
 		return nil, err
 	}
 	field += 1
 
 	// day of week field
-	err = expr.dowFieldHandler(cron[indices[field][0]:indices[field][1]])
+	err = expr.dowFieldHandler(fields[field])
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func parse(cronLine string, expr *Expression) (*Expression, error) {
 
 	// year field
 	if field < fieldCount {
-		err = expr.yearFieldHandler(cron[indices[field][0]:indices[field][1]])
+		err = expr.yearFieldHandler(fields[field])
 		if err != nil {
 			return nil, err
 		}

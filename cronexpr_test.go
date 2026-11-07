@@ -500,6 +500,41 @@ func TestRejected(t *testing.T) {
 	}
 }
 
+// Fields split on space, tab, newline, carriage return and form feed only;
+// empty entries between commas are skipped.
+func TestSplitting(t *testing.T) {
+	from := time.Date(2013, 9, 2, 8, 44, 30, 0, time.UTC)
+	for spec, same := range map[string]string{
+		"0\t9\n*  * *":         "0 9 * * *",
+		" 0\r9\f* * * ":        "0 9 * * *",
+		"0,,30 9 * * *":        "0,30 9 * * *",
+		",0, 9 * * *":          "0 9 * * *",
+		"0 9 1,,15 * MON,,FRI": "0 9 1,15 * MON,FRI",
+	} {
+		expr, err := Parse(spec)
+		if err != nil {
+			t.Errorf("Parse(%q) returned %q", spec, err)
+			continue
+		}
+		got, want := expr.NextN(from, 5), MustParse(same).NextN(from, 5)
+		for i := range want {
+			if !got[i].Equal(want[i]) {
+				t.Errorf("%q run %d: want %v (as %q), got %v", spec, i+1, want[i], same, got[i])
+				break
+			}
+		}
+	}
+	for _, spec := range []string{
+		", 9 * * *",    // a field of empty entries
+		"0\v9 * * * *", // vertical tab is not a separator
+		"0 9 * * * *",  // nor is a no-break space
+	} {
+		if _, err := Parse(spec); err == nil {
+			t.Errorf("Parse(%q) returned no error", spec)
+		}
+	}
+}
+
 // A run's Prev and Next lead back to it, for every spec of crontests.
 func TestPrevUndoesNext(t *testing.T) {
 	for _, test := range crontests {
@@ -531,5 +566,55 @@ func TestPrevN(t *testing.T) {
 	}
 	if got := MustParse("0 0 1 1 * 1970").PrevN(from, 3); len(got) != 1 {
 		t.Errorf("PrevN of a one-run expression returned %d runs, want 1", len(got))
+	}
+}
+
+/******************************************************************************/
+
+// One Expression may be shared: Next and Prev from several goroutines must
+// give the runs they give alone. Run with -race.
+func TestConcurrentNextPrev(t *testing.T) {
+	expr := MustParse("0 0 L * *")
+	from, _ := time.Parse("2006-01-02", "2013-01-15")
+	want := expr.NextN(from, 24)
+	done := make(chan []time.Time)
+	for g := 0; g < 8; g++ {
+		go func() {
+			got := make([]time.Time, 0, len(want))
+			for t := from; len(got) < len(want); {
+				t = expr.Next(t)
+				expr.Prev(t)
+				got = append(got, t)
+			}
+			done <- got
+		}()
+	}
+	for g := 0; g < 8; g++ {
+		got := <-done
+		for i := range want {
+			if !got[i].Equal(want[i]) {
+				t.Fatalf("run %d: want %s, got %s", i+1, want[i], got[i])
+			}
+		}
+	}
+}
+
+// Parse from several goroutines at once. Run with -race.
+func TestConcurrentParse(t *testing.T) {
+	specs := []string{"*/5 9-17 * * MON-FRI", "0 0 L * *", "0 12 15W * ?", "H H(0-6) * * 5#L", "TZ=Europe/Paris 30 2 * * *"}
+	done := make(chan error)
+	for g := 0; g < 8; g++ {
+		go func() {
+			var err error
+			for i := 0; i < 50 && err == nil; i++ {
+				_, err = ParseWithHashKey(specs[i%len(specs)], "job")
+			}
+			done <- err
+		}()
+	}
+	for g := 0; g < 8; g++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
 	}
 }

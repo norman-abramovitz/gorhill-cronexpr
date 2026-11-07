@@ -17,7 +17,6 @@ package cronexpr
 
 import (
 	"fmt"
-	"sort"
 	"time"
 )
 
@@ -27,12 +26,18 @@ import (
 // <https://github.com/gorhill/cronexpr#implementation>
 type Expression struct {
 	expression             string
+	kind                   int            // calendar, interval, aligned or never
+	interval               time.Duration  // for interval and aligned
+	location               *time.Location // from a TZ= prefix; nil: the zone of the time given
+	hashValue              uint64         // for H, from the hash key
+	hashKeyed              bool           // a hash key was given
 	secondList             []int
 	minuteList             []int
 	hourList               []int
 	daysOfMonth            map[int]bool
 	workdaysOfMonth        map[int]bool
 	lastDayOfMonth         bool
+	lastDayOfMonthOffsets  map[int]bool
 	lastWorkdayOfMonth     bool
 	daysOfMonthRestricted  bool
 	actualDaysOfMonthList  []int
@@ -43,6 +48,14 @@ type Expression struct {
 	daysOfWeekRestricted   bool
 	yearList               []int
 }
+
+// Kinds of expression
+const (
+	calendar = iota // fields, or a descriptor such as @daily
+	interval        // @every and @every_start: every interval from the time given
+	aligned         // @every_aligned: the multiples of interval since the Unix epoch
+	never           // @triggered, @manual, @none: never runs by time
+)
 
 /******************************************************************************/
 
@@ -66,10 +79,42 @@ func MustParse(cronLine string) *Expression {
 // See <https://github.com/gorhill/cronexpr#implementation> for documentation
 // about what is a well-formed cron expression from this library's point of
 // view.
+//
+// An expression with H needs a hash key: use ParseWithHashKey.
 func Parse(cronLine string) (*Expression, error) {
+	return parse(cronLine, &Expression{})
+}
+
+// ParseWithHashKey is Parse for an expression that may hold H, which picks
+// values from a hash of key: H, H/n, H(a-b) and H(a-b)/n, in any field but
+// the year. The same key picks the same values as netresearch/go-cron.
+func ParseWithHashKey(cronLine, key string) (*Expression, error) {
+	if key == "" {
+		return nil, fmt.Errorf("H needs a hash key that is not empty")
+	}
+	return parse(cronLine, &Expression{hashValue: hashOf(key), hashKeyed: true})
+}
+
+func parse(cronLine string, expr *Expression) (*Expression, error) {
+	expr.expression = cronLine
+
+	// Maybe a time zone prefix: TZ=America/New_York 0 9 * * *
+	location, rest, err := parseTimeZone(cronLine)
+	if err != nil {
+		return nil, err
+	}
+	expr.location = location
+
+	// Maybe a descriptor that is not a calendar
+	if done, err := expr.parseIntervalDescriptor(rest); done {
+		if err != nil {
+			return nil, err
+		}
+		return expr, nil
+	}
 
 	// Maybe one of the built-in aliases is being used
-	cron := cronNormalizer.Replace(cronLine)
+	cron := cronNormalizer.Replace(rest)
 
 	indices := fieldFinder.FindAllStringIndex(cron, -1)
 	fieldCount := len(indices)
@@ -81,12 +126,11 @@ func Parse(cronLine string) (*Expression, error) {
 		fieldCount = 7
 	}
 
-	var expr = Expression{}
 	var field = 0
-	var err error
 
-	// second field (optional)
-	if fieldCount == 7 {
+	// second field (optional): with seven fields, or with six when the
+	// sixth is not a year
+	if fieldCount == 7 || (fieldCount == 6 && !looksLikeYear(cron[indices[5][0]:indices[5][1]])) {
 		err = expr.secondFieldHandler(cron[indices[field][0]:indices[field][1]])
 		if err != nil {
 			return nil, err
@@ -141,7 +185,7 @@ func Parse(cronLine string) (*Expression, error) {
 		expr.yearList = yearDescriptor.defaultList
 	}
 
-	return &expr, nil
+	return expr, nil
 }
 
 /******************************************************************************/
@@ -150,7 +194,8 @@ func Parse(cronLine string) (*Expression, error) {
 // matches the cron expression `expr`.
 //
 // The `time.Location` of the returned time instant is the same as that of
-// `fromTime`.
+// `fromTime`. The expression is matched against the wall clock of its TZ=
+// zone, or of `fromTime`'s zone when it has none.
 //
 // The zero value of time.Time is returned if no matching time instant exists
 // or if a `fromTime` is itself a zero value.
@@ -159,79 +204,28 @@ func (expr *Expression) Next(fromTime time.Time) time.Time {
 	if fromTime.IsZero() {
 		return fromTime
 	}
-
-	// Since expr.nextSecond()-expr.nextMonth() expects that the
-	// supplied time stamp is a perfect match to the underlying cron
-	// expression, and since this function is an entry point where `fromTime`
-	// does not necessarily matches the underlying cron expression,
-	// we first need to ensure supplied time stamp matches
-	// the cron expression. If not, this means the supplied time
-	// stamp falls in between matching time stamps, thus we move
-	// to closest future matching immediately upon encountering a mismatching
-	// time stamp.
-
-	// year
-	v := fromTime.Year()
-	i := sort.SearchInts(expr.yearList, v)
-	if i == len(expr.yearList) {
+	switch expr.kind {
+	case interval:
+		return fromTime.Add(expr.interval - time.Duration(fromTime.Nanosecond()))
+	case aligned:
+		return fromTime.Add(expr.interval - gridOffset(fromTime, expr.interval))
+	case never:
 		return time.Time{}
 	}
-	if v != expr.yearList[i] {
-		return expr.nextYear(fromTime)
-	}
-	// month
-	v = int(fromTime.Month())
-	i = sort.SearchInts(expr.monthList, v)
-	if i == len(expr.monthList) {
-		return expr.nextYear(fromTime)
-	}
-	if v != expr.monthList[i] {
-		return expr.nextMonth(fromTime)
-	}
 
-	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(fromTime.Year(), int(fromTime.Month()))
-	if len(expr.actualDaysOfMonthList) == 0 {
-		return expr.nextMonth(fromTime)
+	next := expr.nextWall(fromTime.In(expr.zone(fromTime)))
+	if next.IsZero() {
+		return next
 	}
+	return next.In(fromTime.Location())
+}
 
-	// day of month
-	v = fromTime.Day()
-	i = sort.SearchInts(expr.actualDaysOfMonthList, v)
-	if i == len(expr.actualDaysOfMonthList) {
-		return expr.nextMonth(fromTime)
+// zone returns the zone whose wall clock the expression is matched against.
+func (expr *Expression) zone(fromTime time.Time) *time.Location {
+	if expr.location != nil {
+		return expr.location
 	}
-	if v != expr.actualDaysOfMonthList[i] {
-		return expr.nextDayOfMonth(fromTime)
-	}
-	// hour
-	v = fromTime.Hour()
-	i = sort.SearchInts(expr.hourList, v)
-	if i == len(expr.hourList) {
-		return expr.nextDayOfMonth(fromTime)
-	}
-	if v != expr.hourList[i] {
-		return expr.nextHour(fromTime)
-	}
-	// minute
-	v = fromTime.Minute()
-	i = sort.SearchInts(expr.minuteList, v)
-	if i == len(expr.minuteList) {
-		return expr.nextHour(fromTime)
-	}
-	if v != expr.minuteList[i] {
-		return expr.nextMinute(fromTime)
-	}
-	// second
-	v = fromTime.Second()
-	i = sort.SearchInts(expr.secondList, v)
-	if i == len(expr.secondList) {
-		return expr.nextMinute(fromTime)
-	}
-
-	// If we reach this point, there is nothing better to do
-	// than to move to the next second
-
-	return expr.nextSecond(fromTime)
+	return fromTime.Location()
 }
 
 /******************************************************************************/
@@ -248,19 +242,12 @@ func (expr *Expression) Next(fromTime time.Time) time.Time {
 // than `n`.
 func (expr *Expression) NextN(fromTime time.Time, n uint) []time.Time {
 	nextTimes := make([]time.Time, 0, n)
-	if n > 0 {
+	for ; n > 0; n -= 1 {
 		fromTime = expr.Next(fromTime)
-		for {
-			if fromTime.IsZero() {
-				break
-			}
-			nextTimes = append(nextTimes, fromTime)
-			n -= 1
-			if n == 0 {
-				break
-			}
-			fromTime = expr.nextSecond(fromTime)
+		if fromTime.IsZero() {
+			break
 		}
+		nextTimes = append(nextTimes, fromTime)
 	}
 	return nextTimes
 }

@@ -340,3 +340,135 @@ func BenchmarkNext(b *testing.B) {
 		next = expr.Next(next)
 	}
 }
+
+/******************************************************************************/
+
+// The syntax and run times of netresearch/go-cron's full parser. The expected
+// times are go-cron's, except where noted.
+
+type runtest struct {
+	spec string
+	key  string // hash key for H, "" for Parse
+	zone string
+	from string // in zone, 2006-01-02 15:04:05
+	prev bool   // Prev instead of Next
+	want []string
+}
+
+const runLayout = "2006-01-02 15:04:05 MST"
+
+var runtests = []runtest{
+	// Six fields: a year in the sixth makes it minute through year,
+	// otherwise seconds through day of the week
+	{"*/10 * * * * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 00:00:10 UTC", "2026-01-01 00:00:20 UTC"}},
+	{"0 0 0 * * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-03 00:00:00 UTC"}},
+	{"0 0 1 1 * 2030", "", "UTC", "2026-01-01 00:00:00", false, []string{"2030-01-01 00:00:00 UTC", "zero"}},
+	{"0 0 1 1 * */2", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 01:00:00 UTC", "2026-02-01 01:00:00 UTC"}},
+
+	// Day of the month and day of the week both set: both must match
+	{"0 0 13 * 5", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-02-13 00:00:00 UTC", "2026-03-13 00:00:00 UTC"}},
+	{"0 0 1-7 * 1", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-05 00:00:00 UTC", "2026-02-02 00:00:00 UTC"}},
+	{"0 0 L * 5", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-07-31 00:00:00 UTC", "2027-04-30 00:00:00 UTC"}},
+
+	// Wrapped ranges
+	{"50-10 * * * *", "", "UTC", "2026-01-01 00:08:00", false, []string{"2026-01-01 00:09:00 UTC", "2026-01-01 00:10:00 UTC", "2026-01-01 00:50:00 UTC", "2026-01-01 00:51:00 UTC"}},
+	{"50-10/5 * * * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 00:05:00 UTC", "2026-01-01 00:10:00 UTC", "2026-01-01 00:50:00 UTC", "2026-01-01 00:55:00 UTC", "2026-01-01 01:00:00 UTC"}},
+	{"0 22-2 * * *", "", "UTC", "2026-01-01 03:00:00", false, []string{"2026-01-01 22:00:00 UTC", "2026-01-01 23:00:00 UTC", "2026-01-02 00:00:00 UTC", "2026-01-02 01:00:00 UTC", "2026-01-02 02:00:00 UTC"}},
+	{"0 0 28-3 * *", "", "UTC", "2026-01-04 00:00:00", false, []string{"2026-01-28 00:00:00 UTC", "2026-01-29 00:00:00 UTC", "2026-01-30 00:00:00 UTC", "2026-01-31 00:00:00 UTC", "2026-02-01 00:00:00 UTC", "2026-02-02 00:00:00 UTC", "2026-02-03 00:00:00 UTC", "2026-02-28 00:00:00 UTC"}},
+	{"0 0 1 11-2 *", "", "UTC", "2026-03-01 00:00:00", false, []string{"2026-11-01 00:00:00 UTC", "2026-12-01 00:00:00 UTC", "2027-01-01 00:00:00 UTC", "2027-02-01 00:00:00 UTC"}},
+	{"0 0 * * FRI-MON", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-03 00:00:00 UTC", "2026-01-04 00:00:00 UTC", "2026-01-05 00:00:00 UTC", "2026-01-09 00:00:00 UTC"}},
+
+	// Sunday as 0 and 7
+	{"0 0 * * 0-7", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-03 00:00:00 UTC", "2026-01-04 00:00:00 UTC"}},
+	{"0 0 * * 5-7", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-03 00:00:00 UTC", "2026-01-04 00:00:00 UTC", "2026-01-09 00:00:00 UTC"}},
+	{"0 0 * * 6-1", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-03 00:00:00 UTC", "2026-01-04 00:00:00 UTC", "2026-01-05 00:00:00 UTC", "2026-01-10 00:00:00 UTC"}},
+	{"0 0 * * 1/2", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-04 00:00:00 UTC", "2026-01-05 00:00:00 UTC", "2026-01-07 00:00:00 UTC", "2026-01-09 00:00:00 UTC"}},
+	{"0 0 * * */2", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-03 00:00:00 UTC", "2026-01-04 00:00:00 UTC", "2026-01-06 00:00:00 UTC", "2026-01-08 00:00:00 UTC", "2026-01-10 00:00:00 UTC"}},
+	{"0 0 * * 5-1/2", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-04 00:00:00 UTC", "2026-01-09 00:00:00 UTC", "2026-01-11 00:00:00 UTC"}},
+	{"0 0 * * 7-2/2", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-04 00:00:00 UTC", "2026-01-06 00:00:00 UTC", "2026-01-11 00:00:00 UTC", "2026-01-13 00:00:00 UTC"}},
+
+	// ?/n, L-n, #L
+	{"0 0 ?/2 * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-03 00:00:00 UTC", "2026-01-05 00:00:00 UTC", "2026-01-07 00:00:00 UTC"}},
+	{"0 0 L-3 * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-28 00:00:00 UTC", "2026-02-25 00:00:00 UTC"}},
+	{"0 0 * * 5#L", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-30 00:00:00 UTC", "2026-02-27 00:00:00 UTC"}},
+	{"0 0 * * FRI#L", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-30 00:00:00 UTC"}},
+
+	// Years outside 1970-2099. go-cron's Next stops 5 years ahead and
+	// returns zero for 2100 and 2500; cronexpr runs them.
+	{"0 0 1 1 * 2100", "", "UTC", "2026-01-01 00:00:00", false, []string{"2100-01-01 00:00:00 UTC"}},
+	{"0 0 1 1 * 2500", "", "UTC", "2026-01-01 00:00:00", false, []string{"2500-01-01 00:00:00 UTC"}},
+	{"0 0 1 1 * 1969", "", "UTC", "2026-01-01 00:00:00", false, []string{"zero"}},
+
+	// Descriptors
+	{"@midnight", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-03 00:00:00 UTC"}},
+	{"@every 1h", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 01:00:00 UTC", "2026-01-01 02:00:00 UTC"}},
+	{"@every 90m", "", "UTC", "2026-01-01 00:20:00", false, []string{"2026-01-01 01:50:00 UTC", "2026-01-01 03:20:00 UTC"}},
+	{"@every_start 1h", "", "UTC", "2026-01-01 00:20:00", false, []string{"2026-01-01 01:20:00 UTC"}},
+	{"@every_aligned 1h", "", "UTC", "2026-01-01 00:20:00", false, []string{"2026-01-01 01:00:00 UTC", "2026-01-01 02:00:00 UTC"}},
+	{"@triggered", "", "UTC", "2026-01-01 00:00:00", false, []string{"zero"}},
+
+	// Time zone prefix: the run is returned in the zone of the time given
+	{"TZ=America/New_York 0 9 * * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 14:00:00 UTC", "2026-01-02 14:00:00 UTC"}},
+	{"CRON_TZ='Asia/Tokyo' 0 9 * * *", "", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC"}},
+
+	// H, with a hash key
+	{"H * * * *", "job-a", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 00:54:00 UTC", "2026-01-01 01:54:00 UTC"}},
+	{"H H(0-5) * * *", "job-a", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 00:54:00 UTC", "2026-01-02 00:54:00 UTC"}},
+	{"H/15 * * * *", "job-b", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 00:08:00 UTC", "2026-01-01 00:23:00 UTC", "2026-01-01 00:38:00 UTC", "2026-01-01 00:53:00 UTC"}},
+	{"0 0 H(1-28) * *", "job-c", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-05 00:00:00 UTC", "2026-02-05 00:00:00 UTC"}},
+	{"0 0 * * H", "job-d", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-09 00:00:00 UTC"}},
+	{"0 0 * * H/2", "job-d", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-02 00:00:00 UTC", "2026-01-05 00:00:00 UTC", "2026-01-07 00:00:00 UTC", "2026-01-09 00:00:00 UTC"}},
+	{"0 H(22-2) * * *", "job-e", "UTC", "2026-01-01 00:00:00", false, []string{"2026-01-01 01:00:00 UTC", "2026-01-02 01:00:00 UTC"}},
+}
+
+func TestRuns(t *testing.T) {
+	for _, test := range runtests {
+		loc, err := time.LoadLocation(test.zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var expr *Expression
+		if test.key != "" {
+			expr, err = ParseWithHashKey(test.spec, test.key)
+		} else {
+			expr, err = Parse(test.spec)
+		}
+		if err != nil {
+			t.Errorf("Parse(%q) returned %q", test.spec, err)
+			continue
+		}
+		at, _ := time.ParseInLocation("2006-01-02 15:04:05", test.from, loc)
+		for i, want := range test.want {
+			at = expr.Next(at)
+			got := "zero"
+			if !at.IsZero() {
+				got = at.Format(runLayout)
+			}
+			if got != want {
+				t.Errorf("%q from %s, run %d (prev=%v): want %s, got %s", test.spec, test.from, i+1, test.prev, want, got)
+				break
+			}
+			if at.IsZero() {
+				break
+			}
+		}
+	}
+}
+
+func TestRejected(t *testing.T) {
+	for _, spec := range []string{
+		"@every 500ms",        // below one second
+		"H * * * *",           // H without a hash key
+		"0 0 1 1 * 2030-2020", // year ranges do not wrap
+		"0 0 L-31 * *",
+		"TZ=Nowhere/Special 0 9 * * *",
+		"TZ=America/New_York",
+	} {
+		if _, err := Parse(spec); err == nil {
+			t.Errorf("Parse(%q) returned no error", spec)
+		}
+	}
+	if _, err := ParseWithHashKey("H * * * *", ""); err == nil {
+		t.Errorf(`ParseWithHashKey("H * * * *", "") returned no error`)
+	}
+}

@@ -16,10 +16,13 @@ package cronexpr
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 /******************************************************************************/
@@ -97,7 +100,8 @@ var (
 		`4`: 4, `thu`: 4, `thursday`: 4,
 		`5`: 5, `fri`: 5, `friday`: 5,
 		`6`: 6, `sat`: 6, `saturday`: 6,
-		`7`: 0,
+		`7`: 7, `07`: 7,
+		`00`: 0, `01`: 1, `02`: 2, `03`: 3, `04`: 4, `05`: 5, `06`: 6,
 	}
 )
 
@@ -113,6 +117,7 @@ type fieldDescriptor struct {
 	defaultList  []int
 	valuePattern string
 	atoi         func(string) int
+	cyclic       bool // a range may wrap past the maximum: `22-2`
 }
 
 var (
@@ -123,6 +128,7 @@ var (
 		defaultList:  genericDefaultList[0:60],
 		valuePattern: `0?[0-9]|[1-5][0-9]`,
 		atoi:         atoi,
+		cyclic:       true,
 	}
 	minuteDescriptor = fieldDescriptor{
 		name:         "minute",
@@ -131,6 +137,7 @@ var (
 		defaultList:  genericDefaultList[0:60],
 		valuePattern: `0?[0-9]|[1-5][0-9]`,
 		atoi:         atoi,
+		cyclic:       true,
 	}
 	hourDescriptor = fieldDescriptor{
 		name:         "hour",
@@ -139,6 +146,7 @@ var (
 		defaultList:  genericDefaultList[0:24],
 		valuePattern: `0?[0-9]|1[0-9]|2[0-3]`,
 		atoi:         atoi,
+		cyclic:       true,
 	}
 	domDescriptor = fieldDescriptor{
 		name:         "day-of-month",
@@ -147,6 +155,7 @@ var (
 		defaultList:  genericDefaultList[1:32],
 		valuePattern: `0?[1-9]|[12][0-9]|3[01]`,
 		atoi:         atoi,
+		cyclic:       true,
 	}
 	monthDescriptor = fieldDescriptor{
 		name:         "month",
@@ -157,45 +166,61 @@ var (
 		atoi: func(s string) int {
 			return monthTokens[s]
 		},
+		cyclic: true,
 	}
+	// 0 and 7 are both Sunday; 7 becomes 0 once the values are built
 	dowDescriptor = fieldDescriptor{
 		name:         "day-of-week",
 		min:          0,
-		max:          6,
+		max:          7,
 		defaultList:  genericDefaultList[0:7],
 		valuePattern: `0?[0-7]|sun|mon|tue|wed|thu|fri|sat|sunday|monday|tuesday|wednesday|thursday|friday|saturday`,
 		atoi: func(s string) int {
 			return dowTokens[s]
 		},
+		cyclic: true,
 	}
+	// A wildcard year is 1970 to 2099; a written year is any year from 1 to
+	// 2147483647, as netresearch/go-cron
 	yearDescriptor = fieldDescriptor{
 		name:         "year",
 		min:          1970,
 		max:          2099,
 		defaultList:  yearDefaultList[:],
-		valuePattern: `19[789][0-9]|20[0-9]{2}`,
-		atoi:         atoi,
+		valuePattern: `[0-9]+`,
+		atoi: func(s string) int {
+			v, err := strconv.Atoi(s)
+			if err != nil {
+				return -1
+			}
+			return v
+		},
 	}
 )
 
 /******************************************************************************/
 
 var (
-	layoutWildcard            = `^\*$|^\?$`
-	layoutValue               = `^(%value%)$`
-	layoutRange               = `^(%value%)-(%value%)$`
-	layoutWildcardAndInterval = `^\*/(\d+)$`
-	layoutValueAndInterval    = `^(%value%)/(\d+)$`
-	layoutRangeAndInterval    = `^(%value%)-(%value%)/(\d+)$`
-	layoutLastDom             = `^l$`
-	layoutWorkdom             = `^(%value%)w$`
-	layoutLastWorkdom         = `^lw$`
-	layoutDowOfLastWeek       = `^(%value%)l$`
-	layoutDowOfSpecificWeek   = `^(%value%)#([1-5])$`
-	fieldFinder               = regexp.MustCompile(`\S+`)
-	entryFinder               = regexp.MustCompile(`[^,]+`)
-	layoutRegexp              = make(map[string]*regexp.Regexp)
-	layoutRegexpLock          sync.Mutex
+	layoutWildcard             = `^\*$|^\?$`
+	layoutValue                = `^(%value%)$`
+	layoutRange                = `^(%value%)-(%value%)$`
+	layoutWildcardAndInterval  = `^[*?]/(\d+)$`
+	layoutValueAndInterval     = `^(%value%)/(\d+)$`
+	layoutRangeAndInterval     = `^(%value%)-(%value%)/(\d+)$`
+	layoutLastDom              = `^l$`
+	layoutLastDomOffset        = `^l-(0?[1-9]|[12][0-9]|30)$`
+	layoutWorkdom              = `^(%value%)w$`
+	layoutLastWorkdom          = `^lw$`
+	layoutDowOfLastWeek        = `^(%value%)(?:l|#l)$`
+	layoutDowOfSpecificWeek    = `^(%value%)#([1-5])$`
+	layoutHash                 = `^h$`
+	layoutHashAndInterval      = `^h/(\d+)$`
+	layoutHashRange            = `^h\((%value%)-(%value%)\)$`
+	layoutHashRangeAndInterval = `^h\((%value%)-(%value%)\)/(\d+)$`
+	fieldFinder                = regexp.MustCompile(`\S+`)
+	entryFinder                = regexp.MustCompile(`[^,]+`)
+	layoutRegexp               = make(map[string]*regexp.Regexp)
+	layoutRegexpLock           sync.Mutex
 )
 
 /******************************************************************************/
@@ -206,13 +231,65 @@ var cronNormalizer = strings.NewReplacer(
 	"@monthly", "0 0 0 1 * * *",
 	"@weekly", "0 0 0 * * 0 *",
 	"@daily", "0 0 0 * * * *",
+	"@midnight", "0 0 0 * * * *",
 	"@hourly", "0 0 * * * * *")
+
+/******************************************************************************/
+
+var (
+	// `@every 1h30m`, `@every_start 90s`, `@every_aligned 15m`
+	layoutIntervalDescriptor = regexp.MustCompile(`^@(every|every_start|every_aligned) (.*)$`)
+	// Run only when started by hand
+	layoutNeverDescriptor = regexp.MustCompile(`^@(triggered|manual|none)$`)
+)
+
+// parseIntervalDescriptor reads a descriptor that is not a calendar. It
+// reports false when s is none of them.
+func (expr *Expression) parseIntervalDescriptor(s string) (bool, error) {
+	if layoutNeverDescriptor.MatchString(s) {
+		expr.kind = never
+		return true, nil
+	}
+	parts := layoutIntervalDescriptor.FindStringSubmatch(s)
+	if parts == nil {
+		return false, nil
+	}
+	d, err := time.ParseDuration(parts[2])
+	if err != nil {
+		return true, fmt.Errorf("invalid duration in '%s'", s)
+	}
+	// At least one second, counted in whole seconds
+	if d < time.Second {
+		return true, fmt.Errorf("@%s duration must be at least 1s: '%s'", parts[1], s)
+	}
+	expr.interval = d - d%time.Second
+	expr.kind = interval
+	if parts[1] == "every_aligned" {
+		expr.kind = aligned
+	}
+	return true, nil
+}
+
+/******************************************************************************/
+
+// looksLikeYear reports whether a field holds a year: a number of 100 or
+// more. It tells a sixth field that is a year from a day of week.
+func looksLikeYear(field string) bool {
+	for _, part := range yearFinder.FindAllString(field, -1) {
+		if v, err := strconv.Atoi(part); err == nil && v >= 100 {
+			return true
+		}
+	}
+	return false
+}
+
+var yearFinder = regexp.MustCompile(`[0-9]+`)
 
 /******************************************************************************/
 
 func (expr *Expression) secondFieldHandler(s string) error {
 	var err error
-	expr.secondList, err = genericFieldHandler(s, secondDescriptor)
+	expr.secondList, err = expr.genericFieldHandler(s, secondDescriptor)
 	return err
 }
 
@@ -220,7 +297,7 @@ func (expr *Expression) secondFieldHandler(s string) error {
 
 func (expr *Expression) minuteFieldHandler(s string) error {
 	var err error
-	expr.minuteList, err = genericFieldHandler(s, minuteDescriptor)
+	expr.minuteList, err = expr.genericFieldHandler(s, minuteDescriptor)
 	return err
 }
 
@@ -228,7 +305,7 @@ func (expr *Expression) minuteFieldHandler(s string) error {
 
 func (expr *Expression) hourFieldHandler(s string) error {
 	var err error
-	expr.hourList, err = genericFieldHandler(s, hourDescriptor)
+	expr.hourList, err = expr.genericFieldHandler(s, hourDescriptor)
 	return err
 }
 
@@ -236,38 +313,71 @@ func (expr *Expression) hourFieldHandler(s string) error {
 
 func (expr *Expression) monthFieldHandler(s string) error {
 	var err error
-	expr.monthList, err = genericFieldHandler(s, monthDescriptor)
+	expr.monthList, err = expr.genericFieldHandler(s, monthDescriptor)
 	return err
 }
 
 /******************************************************************************/
 
+// The most years a year field may select, as netresearch/go-cron
+const maxYears = 100000
+
 func (expr *Expression) yearFieldHandler(s string) error {
-	var err error
-	expr.yearList, err = genericFieldHandler(s, yearDescriptor)
-	return err
+	directives, err := genericFieldParse(s, yearDescriptor, nil)
+	if err != nil {
+		return err
+	}
+	values := make(map[int]bool)
+	for _, directive := range directives {
+		switch directive.kind {
+		case none:
+			return fmt.Errorf("syntax error in year field: '%s'", s[directive.sbeg:directive.send])
+		case one:
+			directive.last = directive.first
+			directive.step = 1
+		case all:
+			expr.yearList = yearDescriptor.defaultList
+			return nil
+		}
+		// A written year is any year from 1 to 2147483647; year ranges do
+		// not wrap
+		if directive.first < 1 || directive.last > math.MaxInt32 {
+			return fmt.Errorf("year out of range in year field: '%s'", s[directive.sbeg:directive.send])
+		}
+		if directive.first > directive.last {
+			return fmt.Errorf("year range ends before it starts: '%s'", s[directive.sbeg:directive.send])
+		}
+		if (directive.last-directive.first)/directive.step+1+len(values) > maxYears {
+			return fmt.Errorf("year field selects more than %d years: '%s'", maxYears, s)
+		}
+		populateSpan(values, directive.first, directive.last, directive.step, yearDescriptor)
+	}
+	expr.yearList = toList(values)
+	return nil
 }
 
 /******************************************************************************/
 
 const (
-	none = 0
-	one  = 1
-	span = 2
-	all  = 3
+	none   = 0
+	one    = 1
+	span   = 2
+	all    = 3
+	picked = 4 // values picked by H
 )
 
 type cronDirective struct {
-	kind  int
-	first int
-	last  int
-	step  int
-	sbeg  int
-	send  int
+	kind   int
+	first  int
+	last   int
+	step   int
+	values []int
+	sbeg   int
+	send   int
 }
 
-func genericFieldHandler(s string, desc fieldDescriptor) ([]int, error) {
-	directives, err := genericFieldParse(s, desc)
+func (expr *Expression) genericFieldHandler(s string, desc fieldDescriptor) ([]int, error) {
+	directives, err := genericFieldParse(s, desc, expr)
 	if err != nil {
 		return nil, err
 	}
@@ -279,9 +389,11 @@ func genericFieldHandler(s string, desc fieldDescriptor) ([]int, error) {
 		case one:
 			populateOne(values, directive.first)
 		case span:
-			populateMany(values, directive.first, directive.last, directive.step)
+			populateSpan(values, directive.first, directive.last, directive.step, desc)
 		case all:
 			return desc.defaultList, nil
+		case picked:
+			populateList(values, directive.values)
 		}
 	}
 	return toList(values), nil
@@ -293,11 +405,10 @@ func (expr *Expression) dowFieldHandler(s string) error {
 	expr.lastWeekDaysOfWeek = make(map[int]bool)
 	expr.specificWeekDaysOfWeek = make(map[int]bool)
 
-	directives, err := genericFieldParse(s, dowDescriptor)
+	directives, err := genericFieldParse(s, dowDescriptor, expr)
 	if err != nil {
 		return err
 	}
-
 	for _, directive := range directives {
 		switch directive.kind {
 		case none:
@@ -319,11 +430,18 @@ func (expr *Expression) dowFieldHandler(s string) error {
 		case one:
 			populateOne(expr.daysOfWeek, directive.first)
 		case span:
-			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
+			populateSpan(expr.daysOfWeek, directive.first, directive.last, directive.step, dowDescriptor)
 		case all:
 			populateMany(expr.daysOfWeek, directive.first, directive.last, directive.step)
 			expr.daysOfWeekRestricted = false
+		case picked:
+			populateList(expr.daysOfWeek, directive.values)
 		}
+	}
+	// Sunday is 0 and 7: fold 7 into 0 once the values are built
+	if expr.daysOfWeek[7] {
+		delete(expr.daysOfWeek, 7)
+		expr.daysOfWeek[0] = true
 	}
 	return nil
 }
@@ -332,10 +450,11 @@ func (expr *Expression) domFieldHandler(s string) error {
 	expr.daysOfMonthRestricted = true
 	expr.lastDayOfMonth = false
 	expr.lastWorkdayOfMonth = false
-	expr.daysOfMonth = make(map[int]bool)     // days of month map
-	expr.workdaysOfMonth = make(map[int]bool) // work days of month map
+	expr.daysOfMonth = make(map[int]bool)           // days of month map
+	expr.workdaysOfMonth = make(map[int]bool)       // work days of month map
+	expr.lastDayOfMonthOffsets = make(map[int]bool) // days before the last day of month
 
-	directives, err := genericFieldParse(s, domDescriptor)
+	directives, err := genericFieldParse(s, domDescriptor, expr)
 	if err != nil {
 		return err
 	}
@@ -348,6 +467,9 @@ func (expr *Expression) domFieldHandler(s string) error {
 			// `L`
 			if makeLayoutRegexp(layoutLastDom, domDescriptor.valuePattern).MatchString(snormal) {
 				expr.lastDayOfMonth = true
+			} else if pairs := makeLayoutRegexp(layoutLastDomOffset, domDescriptor.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+				// `L-3`
+				populateOne(expr.lastDayOfMonthOffsets, atoi(snormal[pairs[2]:pairs[3]]))
 			} else {
 				// `LW`
 				if makeLayoutRegexp(layoutLastWorkdom, domDescriptor.valuePattern).MatchString(snormal) {
@@ -365,10 +487,12 @@ func (expr *Expression) domFieldHandler(s string) error {
 		case one:
 			populateOne(expr.daysOfMonth, directive.first)
 		case span:
-			populateMany(expr.daysOfMonth, directive.first, directive.last, directive.step)
+			populateSpan(expr.daysOfMonth, directive.first, directive.last, directive.step, domDescriptor)
 		case all:
 			populateMany(expr.daysOfMonth, directive.first, directive.last, directive.step)
 			expr.daysOfMonthRestricted = false
+		case picked:
+			populateList(expr.daysOfMonth, directive.values)
 		}
 	}
 	return nil
@@ -386,6 +510,33 @@ func populateMany(values map[int]bool, min, max, step int) {
 	}
 }
 
+func populateList(values map[int]bool, list []int) {
+	for _, v := range list {
+		values[v] = true
+	}
+}
+
+// populateSpan adds the values from first to last by step. When first is
+// past last, the range wraps around: `22-2` is 22, 23, 0, 1, 2, and the step
+// counts on across the wrap. A day of week step walks the seven distinct
+// days, so Sunday (0 and 7) counts once.
+func populateSpan(values map[int]bool, first, last, step int, desc fieldDescriptor) {
+	if first <= last {
+		populateMany(values, first, last, step)
+		return
+	}
+	if step > 1 {
+		first, last, desc = dowCycle(first, last, desc)
+		if first <= last {
+			populateMany(values, first, last, step)
+			return
+		}
+	}
+	for v := first; v <= last+desc.max-desc.min+1; v += step {
+		values[wrapValue(v, desc)] = true
+	}
+}
+
 func toList(set map[int]bool) []int {
 	list := make([]int, len(set))
 	i := 0
@@ -399,7 +550,9 @@ func toList(set map[int]bool) []int {
 
 /******************************************************************************/
 
-func genericFieldParse(s string, desc fieldDescriptor) ([]*cronDirective, error) {
+// genericFieldParse reads the entries of a field. expr gives the hash for H;
+// it is nil for the year field, where H is a syntax error.
+func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cronDirective, error) {
 	// At least one entry must be present
 	indices := entryFinder.FindAllStringIndex(s, -1)
 	if len(indices) == 0 {
@@ -431,7 +584,7 @@ func genericFieldParse(s string, desc fieldDescriptor) ([]*cronDirective, error)
 			directives = append(directives, &directive)
 			continue
 		}
-		// `5-20`
+		// `5-20`, or `22-2` wrapping around
 		pairs := makeLayoutRegexp(layoutRange, desc.valuePattern).FindStringSubmatchIndex(snormal)
 		if len(pairs) > 0 {
 			directive.kind = span
@@ -480,11 +633,55 @@ func genericFieldParse(s string, desc fieldDescriptor) ([]*cronDirective, error)
 			directives = append(directives, &directive)
 			continue
 		}
+		// `H`, `H/15`, `H(0-29)`, `H(0-29)/10`
+		if expr != nil {
+			found, err := expr.parseHash(snormal, desc, &directive)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				directives = append(directives, &directive)
+				continue
+			}
+		}
 		// No behavior for this one, let caller deal with it
 		directive.kind = none
 		directives = append(directives, &directive)
 	}
 	return directives, nil
+}
+
+// parseHash reads an H entry into directive. It reports false when snormal
+// is not one.
+func (expr *Expression) parseHash(snormal string, desc fieldDescriptor, directive *cronDirective) (bool, error) {
+	first, last, step := desc.min, desc.max, 0
+	if makeLayoutRegexp(layoutHash, desc.valuePattern).MatchString(snormal) {
+		// whole field, one value
+	} else if pairs := makeLayoutRegexp(layoutHashAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+		step, _ = strconv.Atoi(snormal[pairs[2]:pairs[3]])
+	} else if pairs := makeLayoutRegexp(layoutHashRange, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+		first = desc.atoi(snormal[pairs[2]:pairs[3]])
+		last = desc.atoi(snormal[pairs[4]:pairs[5]])
+	} else if pairs := makeLayoutRegexp(layoutHashRangeAndInterval, desc.valuePattern).FindStringSubmatchIndex(snormal); len(pairs) > 0 {
+		first = desc.atoi(snormal[pairs[2]:pairs[3]])
+		last = desc.atoi(snormal[pairs[4]:pairs[5]])
+		step, _ = strconv.Atoi(snormal[pairs[6]:pairs[7]])
+	} else {
+		return false, nil
+	}
+	if !expr.hashKeyed {
+		return true, fmt.Errorf("H needs a hash key, use ParseWithHashKey: '%s'", snormal)
+	}
+	directive.kind = picked
+	switch {
+	case strings.Contains(snormal, "/") && step < 1:
+		return true, fmt.Errorf("invalid interval %s", snormal)
+	case step > 0:
+		directive.values = hashStep(first, last, step, desc, expr.hashValue)
+	default:
+		directive.values = []int{hashOne(first, last, desc, expr.hashValue)}
+	}
+	return true, nil
 }
 
 /******************************************************************************/

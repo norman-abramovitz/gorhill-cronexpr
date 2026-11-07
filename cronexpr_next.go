@@ -33,6 +33,85 @@ var dowNormalizedOffsets = [][]int{
 
 /******************************************************************************/
 
+// nextWall returns the first time after `fromTime`, in its zone, whose wall
+// clock matches the cron expression `expr`.
+func (expr *Expression) nextWall(fromTime time.Time) time.Time {
+	// Since expr.nextSecond()-expr.nextMonth() expects that the
+	// supplied time stamp is a perfect match to the underlying cron
+	// expression, and since this function is an entry point where `fromTime`
+	// does not necessarily matches the underlying cron expression,
+	// we first need to ensure supplied time stamp matches
+	// the cron expression. If not, this means the supplied time
+	// stamp falls in between matching time stamps, thus we move
+	// to closest future matching immediately upon encountering a mismatching
+	// time stamp.
+
+	// year
+	v := fromTime.Year()
+	i := sort.SearchInts(expr.yearList, v)
+	if i == len(expr.yearList) {
+		return time.Time{}
+	}
+	if v != expr.yearList[i] {
+		return expr.nextYear(fromTime)
+	}
+	// month
+	v = int(fromTime.Month())
+	i = sort.SearchInts(expr.monthList, v)
+	if i == len(expr.monthList) {
+		return expr.nextYear(fromTime)
+	}
+	if v != expr.monthList[i] {
+		return expr.nextMonth(fromTime)
+	}
+
+	expr.actualDaysOfMonthList = expr.calculateActualDaysOfMonth(fromTime.Year(), int(fromTime.Month()))
+	if len(expr.actualDaysOfMonthList) == 0 {
+		return expr.nextMonth(fromTime)
+	}
+
+	// day of month
+	v = fromTime.Day()
+	i = sort.SearchInts(expr.actualDaysOfMonthList, v)
+	if i == len(expr.actualDaysOfMonthList) {
+		return expr.nextMonth(fromTime)
+	}
+	if v != expr.actualDaysOfMonthList[i] {
+		return expr.nextDayOfMonth(fromTime)
+	}
+	// hour
+	v = fromTime.Hour()
+	i = sort.SearchInts(expr.hourList, v)
+	if i == len(expr.hourList) {
+		return expr.nextDayOfMonth(fromTime)
+	}
+	if v != expr.hourList[i] {
+		return expr.nextHour(fromTime)
+	}
+	// minute
+	v = fromTime.Minute()
+	i = sort.SearchInts(expr.minuteList, v)
+	if i == len(expr.minuteList) {
+		return expr.nextHour(fromTime)
+	}
+	if v != expr.minuteList[i] {
+		return expr.nextMinute(fromTime)
+	}
+	// second
+	v = fromTime.Second()
+	i = sort.SearchInts(expr.secondList, v)
+	if i == len(expr.secondList) {
+		return expr.nextMinute(fromTime)
+	}
+
+	// If we reach this point, there is nothing better to do
+	// than to move to the next second
+
+	return expr.nextSecond(fromTime)
+}
+
+/******************************************************************************/
+
 func (expr *Expression) nextYear(t time.Time) time.Time {
 	// Find index at which item in list is greater or equal to
 	// candidate year
@@ -188,86 +267,108 @@ func (expr *Expression) nextSecond(t time.Time) time.Time {
 /******************************************************************************/
 
 func (expr *Expression) calculateActualDaysOfMonth(year, month int) []int {
-	actualDaysOfMonthMap := make(map[int]bool)
 	firstDayOfMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 	lastDayOfMonth := firstDayOfMonth.AddDate(0, 1, -1)
+	allDays := genericDefaultList[1 : lastDayOfMonth.Day()+1]
 
-	// As per crontab man page (http://linux.die.net/man/5/crontab#):
-	//  "The day of a command's execution can be specified by two
-	//  "fields - day of month, and day of week. If both fields are
-	//  "restricted (ie, aren't *), the command will be run when
-	//  "either field matches the current time"
+	// A day must match both the day of month and the day of week, as every
+	// other field must match. (The crontab man page runs the command when
+	// either matches; netresearch/go-cron, by default, when both do.)
 
 	// If both fields are not restricted, all days of the month are a hit
 	if expr.daysOfMonthRestricted == false && expr.daysOfWeekRestricted == false {
-		return genericDefaultList[1 : lastDayOfMonth.Day()+1]
+		return allDays
 	}
-
-	// day-of-month != `*`
-	if expr.daysOfMonthRestricted {
-		// Last day of month
-		if expr.lastDayOfMonth {
-			actualDaysOfMonthMap[lastDayOfMonth.Day()] = true
-		}
-		// Last work day of month
-		if expr.lastWorkdayOfMonth {
-			actualDaysOfMonthMap[workdayOfMonth(lastDayOfMonth, lastDayOfMonth)] = true
-		}
-		// Days of month
-		for v := range expr.daysOfMonth {
-			// Ignore days beyond end of month
-			if v <= lastDayOfMonth.Day() {
-				actualDaysOfMonthMap[v] = true
-			}
-		}
-		// Work days of month
-		// As per Wikipedia: month boundaries are not crossed.
-		for v := range expr.workdaysOfMonth {
-			// Ignore days beyond end of month
-			if v <= lastDayOfMonth.Day() {
-				actualDaysOfMonthMap[workdayOfMonth(firstDayOfMonth.AddDate(0, 0, v-1), lastDayOfMonth)] = true
-			}
+	if expr.daysOfMonthRestricted == false {
+		return toList(expr.daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth))
+	}
+	daysOfMonth := expr.daysOfMonthInMonth(firstDayOfMonth, lastDayOfMonth)
+	if expr.daysOfWeekRestricted == false {
+		return toList(daysOfMonth)
+	}
+	daysOfWeek := expr.daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth)
+	for v := range daysOfMonth {
+		if !daysOfWeek[v] {
+			delete(daysOfMonth, v)
 		}
 	}
+	return toList(daysOfMonth)
+}
 
-	// day-of-week != `*`
-	if expr.daysOfWeekRestricted {
-		// How far first sunday is from first day of month
-		offset := 7 - int(firstDayOfMonth.Weekday())
-		// days of week
-		//  offset : (7 - day_of_week_of_1st_day_of_month)
-		//  target : 1 + (7 * week_of_month) + (offset + day_of_week) % 7
-		for v := range expr.daysOfWeek {
-			w := dowNormalizedOffsets[(offset+v)%7]
-			actualDaysOfMonthMap[w[0]] = true
-			actualDaysOfMonthMap[w[1]] = true
-			actualDaysOfMonthMap[w[2]] = true
-			actualDaysOfMonthMap[w[3]] = true
-			if len(w) > 4 && w[4] <= lastDayOfMonth.Day() {
-				actualDaysOfMonthMap[w[4]] = true
-			}
-		}
-		// days of week of specific week in the month
-		//  offset : (7 - day_of_week_of_1st_day_of_month)
-		//  target : 1 + (7 * week_of_month) + (offset + day_of_week) % 7
-		for v := range expr.specificWeekDaysOfWeek {
-			v = 1 + 7*(v/7) + (offset+v)%7
-			if v <= lastDayOfMonth.Day() {
-				actualDaysOfMonthMap[v] = true
-			}
-		}
-		// Last days of week of the month
-		lastWeekOrigin := firstDayOfMonth.AddDate(0, 1, -7)
-		offset = 7 - int(lastWeekOrigin.Weekday())
-		for v := range expr.lastWeekDaysOfWeek {
-			v = lastWeekOrigin.Day() + (offset+v)%7
-			if v <= lastDayOfMonth.Day() {
-				actualDaysOfMonthMap[v] = true
-			}
+// daysOfMonthInMonth returns the days of the month that the day-of-month
+// field selects.
+func (expr *Expression) daysOfMonthInMonth(firstDayOfMonth, lastDayOfMonth time.Time) map[int]bool {
+	actualDaysOfMonthMap := make(map[int]bool)
+	// Last day of month
+	if expr.lastDayOfMonth {
+		actualDaysOfMonthMap[lastDayOfMonth.Day()] = true
+	}
+	// Days before the last day of month: `L-3`
+	for v := range expr.lastDayOfMonthOffsets {
+		if v < lastDayOfMonth.Day() {
+			actualDaysOfMonthMap[lastDayOfMonth.Day()-v] = true
 		}
 	}
+	// Last work day of month
+	if expr.lastWorkdayOfMonth {
+		actualDaysOfMonthMap[workdayOfMonth(lastDayOfMonth, lastDayOfMonth)] = true
+	}
+	// Days of month
+	for v := range expr.daysOfMonth {
+		// Ignore days beyond end of month
+		if v <= lastDayOfMonth.Day() {
+			actualDaysOfMonthMap[v] = true
+		}
+	}
+	// Work days of month
+	// As per Wikipedia: month boundaries are not crossed.
+	for v := range expr.workdaysOfMonth {
+		// Ignore days beyond end of month
+		if v <= lastDayOfMonth.Day() {
+			actualDaysOfMonthMap[workdayOfMonth(firstDayOfMonth.AddDate(0, 0, v-1), lastDayOfMonth)] = true
+		}
+	}
+	return actualDaysOfMonthMap
+}
 
-	return toList(actualDaysOfMonthMap)
+// daysOfWeekInMonth returns the days of the month that the day-of-week
+// field selects.
+func (expr *Expression) daysOfWeekInMonth(firstDayOfMonth, lastDayOfMonth time.Time) map[int]bool {
+	actualDaysOfMonthMap := make(map[int]bool)
+	// How far first sunday is from first day of month
+	offset := 7 - int(firstDayOfMonth.Weekday())
+	// days of week
+	//  offset : (7 - day_of_week_of_1st_day_of_month)
+	//  target : 1 + (7 * week_of_month) + (offset + day_of_week) % 7
+	for v := range expr.daysOfWeek {
+		w := dowNormalizedOffsets[(offset+v)%7]
+		actualDaysOfMonthMap[w[0]] = true
+		actualDaysOfMonthMap[w[1]] = true
+		actualDaysOfMonthMap[w[2]] = true
+		actualDaysOfMonthMap[w[3]] = true
+		if len(w) > 4 && w[4] <= lastDayOfMonth.Day() {
+			actualDaysOfMonthMap[w[4]] = true
+		}
+	}
+	// days of week of specific week in the month
+	//  offset : (7 - day_of_week_of_1st_day_of_month)
+	//  target : 1 + (7 * week_of_month) + (offset + day_of_week) % 7
+	for v := range expr.specificWeekDaysOfWeek {
+		v = 1 + 7*(v/7) + (offset+v)%7
+		if v <= lastDayOfMonth.Day() {
+			actualDaysOfMonthMap[v] = true
+		}
+	}
+	// Last days of week of the month
+	lastWeekOrigin := firstDayOfMonth.AddDate(0, 1, -7)
+	offset = 7 - int(lastWeekOrigin.Weekday())
+	for v := range expr.lastWeekDaysOfWeek {
+		v = lastWeekOrigin.Day() + (offset+v)%7
+		if v <= lastDayOfMonth.Day() {
+			actualDaysOfMonthMap[v] = true
+		}
+	}
+	return actualDaysOfMonthMap
 }
 
 func workdayOfMonth(targetDom, lastDom time.Time) int {

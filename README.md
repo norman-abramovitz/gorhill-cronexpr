@@ -6,7 +6,7 @@ In another project, I decided to use cron expression syntax to encode scheduling
 
 The time-matching algorithm in this implementation is efficient, it avoids as much as possible to guess the next matching time stamp, a common technique seen in a number of implementations out there.
 
-There is also a companion command-line utility to evaluate cron time expressions: <https://github.com/gorhill/cronexpr/tree/master/cronexpr> (which of course uses this library).
+There is also a companion command-line utility to evaluate cron time expressions: [cronexpr](cronexpr/) (which of course uses this library).
 
 Implementation
 --------------
@@ -15,16 +15,20 @@ The reference documentation for this implementation is found at
 
     Field name     Mandatory?   Allowed values    Allowed special characters
     ----------     ----------   --------------    --------------------------
-    Seconds        No           0-59              * / , -
-    Minutes        Yes          0-59              * / , -
-    Hours          Yes          0-23              * / , -
-    Day of month   Yes          1-31              * / , - L W
-    Month          Yes          1-12 or JAN-DEC   * / , -
-    Day of week    Yes          0-6 or SUN-SAT    * / , - L #
-    Year           No           1970–2099         * / , -
+    Seconds        No           0-59              * ? / , - H
+    Minutes        Yes          0-59              * ? / , - H
+    Hours          Yes          0-23              * ? / , - H
+    Day of month   Yes          1-31              * ? / , - L W H
+    Month          Yes          1-12 or JAN-DEC   * ? / , - H
+    Day of week    Yes          0-7 or SUN-SAT    * ? / , - L # H
+    Year           No           1970–2099 for *   * ? / , -
+                                1-2147483647 written
 
 #### Asterisk ( * )
 The asterisk indicates that the cron expression matches for all values of the field. E.g., using an asterisk in the 4th field (month) indicates every month. 
+
+#### Question mark ( ? )
+`?` is the same as `*`, and `?/n` the same as `*/n`.
 
 #### Slash ( / )
 Slashes describe increments of ranges. For example `3-59/15` in the minute field indicate the third minute of the hour and every 15 minutes thereafter. The form `*/...` is equivalent to the form "first-last/...", that is, an increment over the largest possible range of the field.
@@ -35,8 +39,10 @@ Commas are used to separate items of a list. For example, using `MON,WED,FRI` in
 #### Hyphen ( - )
 Hyphens define ranges. For example, 2000-2010 indicates every year between 2000 and 2010 AD, inclusive.
 
+A range whose first value is above its last wraps past the end of the field: `50-10` in the minute field is minutes 50 to 59 and 0 to 10, `22-2` in the hour field runs over midnight, and `FRI-MON` is Friday to Monday. A step counts on across the wrap: `50-10/5` is minutes 50, 55, 0, 5 and 10. Years do not wrap.
+
 #### L
-`L` stands for "last". When used in the day-of-week field, it allows you to specify constructs such as "the last Friday" (`5L`) of a given month. In the day-of-month field, it specifies the last day of the month.
+`L` stands for "last". When used in the day-of-week field, it allows you to specify constructs such as "the last Friday" (`5L`, or `5#L`) of a given month. In the day-of-month field, it specifies the last day of the month, and `L-n` the day `n` days before it: `L-1` is the second-to-last day of the month.
 
 #### W
 The `W` character is allowed for the day-of-month field. This character is used to specify the business day (Monday-Friday) nearest the given day. As an example, if you were to specify `15W` as the value for the day-of-month field, the meaning is: "the nearest business day to the 15th of the month."
@@ -48,7 +54,19 @@ The `W` character can be specified only when the day-of-month is a single day, n
 The `W` character can also be combined with `L`, i.e. `LW` to mean "the last business day of the month."
 
 #### Hash ( # )
-`#` is allowed for the day-of-week field, and must be followed by a number between one and five. It allows you to specify constructs such as "the second Friday" of a given month.
+`#` is allowed for the day-of-week field, and must be followed by a number between one and five, or by `L`. It allows you to specify constructs such as "the second Friday" of a given month.
+
+#### H
+`H` picks a value from a hash of a key, so that jobs given the same expression with different keys spread out instead of all running at once. It needs a key, given with `ParseWithHashKey`; `Parse` rejects an expression with `H`. The same key always picks the same values, and picks the ones that netresearch/go-cron picks.
+
+* `H` is one value of the field: `H * * * *` runs once an hour, at a minute the key picks.
+* `H/n` is every `n`-th value, from an offset the key picks: `H/15 * * * *` runs four times an hour.
+* `H(a-b)` and `H(a-b)/n` do the same within `a` to `b`, which may wrap: `0 H(22-2) * * *` runs once a night.
+
+`H` is allowed in every field but the year.
+
+#### Day of month and day of week together
+When both day-of-month and day-of-week are restricted, a day must match both, as every other field must match: `0 0 13 * FRI` runs on Friday the 13th. (The crontab of Vixie cron runs when either one matches.)
 
 Predefined cron expressions
 ---------------------------
@@ -60,25 +78,51 @@ Predefined cron expressions
     @monthly    Run once a month at midnight in the morning of the first of the month   0 0 0 1 * * *
     @weekly     Run once a week at midnight in the morning of Sunday                    0 0 0 * * 0 *
     @daily      Run once a day at midnight                                              0 0 0 * * * *
+    @midnight   Run once a day at midnight                                              0 0 0 * * * *
     @hourly     Run once an hour at the beginning of the hour                           0 0 * * * * *
     @reboot     Not supported
 
+These are not calendar expressions:
+
+    Entry                Description
+    @every d             Run every duration d after the time given, e.g. @every 1h30m
+    @every_start d       The same as @every d
+    @every_aligned d     Run at the multiples of d since 1970-01-01 00:00:00 UTC, e.g. @every_aligned 15m runs at :00, :15, :30 and :45
+    @triggered           Never run by time: Next and Prev return the zero time. Also @manual and @none
+
+The duration `d` is written as for Go's `time.ParseDuration`, must be at least one second, and is counted in whole seconds.
+
+Time zones
+----------
+A `TZ=` or `CRON_TZ=` prefix gives the time zone whose wall clock the expression is matched against, by its IANA name, with or without quotes:
+
+    TZ=America/New_York 0 9 * * MON-FRI
+    CRON_TZ="Asia/Tokyo" @daily
+
+Without a prefix, the expression is matched against the wall clock of the time zone of the time given.
+
+Daylight saving time changes follow netresearch/go-cron:
+
+* A time repeated when the clocks go back runs twice, once in each copy. `30 1 * * *` in New York runs at 01:30 EDT and again at 01:30 EST on the day summer time ends.
+* A time skipped when the clocks go forward runs once, at the earliest skipped run moved on by the length of the gap. `30 2 * * *` in New York runs at 03:30 EDT on the day summer time starts.
+
 Other details
 -------------
-* If only six fields are present, a `0` second field is prepended, that is, `* * * * * 2013` internally become `0 * * * * * 2013`.
+* If only six fields are present, the sixth is read as a year when it is a number of 100 or more (also in a list, range or step: `2030-2035`). Then a `0` second field is prepended, that is, `* * * * * 2013` internally become `0 * * * * * 2013`. Otherwise the six fields are seconds through day of week, and a wildcard year field is appended, that is, `*/10 * * * * *` runs every ten seconds. A year below 100 needs all seven fields.
 * If only five fields are present, a `0` second field is prepended and a wildcard year field is appended, that is, `* * * * Mon` internally become `0 * * * * Mon *`.
 * Domain for day-of-week field is [0-7] instead of [0-6], 7 being Sunday (like 0). This to comply with http://linux.die.net/man/5/crontab#.
+* A wildcard year runs from 1970 to 2099, but a year written out may be any year from 1 to 2147483647.
 * As of now, the behavior of the code is undetermined if a malformed cron expression is supplied
 
 Install
 -------
-    go get github.com/gorhill/cronexpr
+    go get github.com/norman-abramovitz/gorhill-cronexpr/v2
 
 Usage
 -----
 Import the library:
 
-    import "github.com/gorhill/cronexpr"
+    import "github.com/norman-abramovitz/gorhill-cronexpr/v2"
     import "time"
 
 Simplest way:
@@ -122,13 +166,18 @@ given, latest first:
     cronexpr.MustParse("0 0 29 2 *").PrevN(time.Now(), 2)
 
 The time zone of time values returned by `Next`, `NextN`, `Prev` and `PrevN`
-is always the
-time zone of the time value passed as argument, unless a zero time value is
-returned.
+is always the time zone of the time value passed as argument, unless a zero
+time value is returned. This holds with a `TZ=` prefix too: the expression is
+matched in the prefix's zone, and the run is returned in the zone of the time
+given.
+
+An expression with `H` is parsed with a key, such as the job's name:
+
+    expr, err := cronexpr.ParseWithHashKey("H H(0-5) * * *", "nightly-backup")
 
 API
 ---
-<http://godoc.org/github.com/gorhill/cronexpr>
+<https://pkg.go.dev/github.com/norman-abramovitz/gorhill-cronexpr/v2>
 
 License
 -------

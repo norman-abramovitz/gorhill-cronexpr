@@ -29,6 +29,7 @@ var (
 		flag.PrintDefaults()
 	}
 	inTimeStr     string
+	hashKey       string
 	outTimeCount  uint
 	outTimeLayout string
 )
@@ -40,6 +41,7 @@ func main() {
 
 	flag.Usage = usage
 	flag.StringVar(&inTimeStr, "t", "", `whole or partial RFC3339 time value (i.e. "2006-01-02T15:04:05Z07:00") against which the cron expression is evaluated, now if not present`)
+	flag.StringVar(&hashKey, "k", "", `hash key from which H picks its values (e.g. a job name); needed for an expression with H`)
 	flag.UintVar(&outTimeCount, "n", 1, `number of resulting time values to output`)
 	flag.StringVar(&outTimeLayout, "l", "Mon, 02 Jan 2006 15:04:05 MST", `Go-compliant time layout to use for outputting time value(s), see <http://golang.org/pkg/time/#pkg-constants>`)
 	flag.Parse()
@@ -90,7 +92,12 @@ func main() {
 		}
 	}
 
-	expr, err := cronexpr.Parse(cronStr)
+	var expr *cronexpr.Expression
+	if hashKey == "" {
+		expr, err = cronexpr.Parse(cronStr)
+	} else {
+		expr, err = cronexpr.ParseWithHashKey(cronStr, hashKey)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "# %s: %s\n", os.Args[0], err)
 		os.Exit(1)

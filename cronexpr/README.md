@@ -16,6 +16,12 @@ It is based on the standalone Go library <https://github.com/gorhill/cronexpr>.
 
 ## Options
 
+`-k`:
+
+Hash key from which `H` picks its values, e.g. a job name: the same key picks the same values. An expression with `H` needs one.
+
+Default is none.
+
 `-l`:
 
 Go-compliant time layout to use for outputting time value(s), see <http://golang.org/pkg/time/#pkg-constants>.

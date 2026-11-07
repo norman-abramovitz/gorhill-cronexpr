@@ -533,3 +533,25 @@ func TestPrevN(t *testing.T) {
 		t.Errorf("PrevN of a one-run expression returned %d runs, want 1", len(got))
 	}
 }
+
+/******************************************************************************/
+
+// Parse from several goroutines at once. Run with -race.
+func TestConcurrentParse(t *testing.T) {
+	specs := []string{"*/5 9-17 * * MON-FRI", "0 0 L * *", "0 12 15W * ?", "H H(0-6) * * 5#L", "TZ=Europe/Paris 30 2 * * *"}
+	done := make(chan error)
+	for g := 0; g < 8; g++ {
+		go func() {
+			var err error
+			for i := 0; i < 50 && err == nil; i++ {
+				_, err = ParseWithHashKey(specs[i%len(specs)], "job")
+			}
+			done <- err
+		}()
+	}
+	for g := 0; g < 8; g++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+}

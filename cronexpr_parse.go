@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -220,8 +219,6 @@ var (
 	layoutHashRangeAndInterval = `^h\((%value%)-(%value%)\)/(\d+)$`
 	fieldFinder                = regexp.MustCompile(`\S+`)
 	entryFinder                = regexp.MustCompile(`[^,]+`)
-	layoutRegexp               = make(map[string]*regexp.Regexp)
-	layoutRegexpLock           sync.Mutex
 )
 
 /******************************************************************************/
@@ -687,15 +684,38 @@ func (expr *Expression) parseHash(snormal string, desc fieldDescriptor, directiv
 
 /******************************************************************************/
 
-func makeLayoutRegexp(layout, value string) *regexp.Regexp {
-	layoutRegexpLock.Lock()
-	defer layoutRegexpLock.Unlock()
+// layoutKey names one compiled layout: the layout with a field's value
+// pattern in place of %value%.
+type layoutKey struct{ layout, value string }
 
-	layout = strings.Replace(layout, `%value%`, value, -1)
-	re := layoutRegexp[layout]
-	if re == nil {
-		re = regexp.MustCompile(layout)
-		layoutRegexp[layout] = re
+// layoutRegexp holds every layout compiled for every field, built once at
+// startup. It is only read afterwards, so parsing needs no lock.
+var layoutRegexp = func() map[layoutKey]*regexp.Regexp {
+	layouts := []string{
+		layoutWildcard, layoutValue, layoutRange, layoutWildcardAndInterval,
+		layoutValueAndInterval, layoutRangeAndInterval, layoutLastDom,
+		layoutLastDomOffset, layoutWorkdom, layoutLastWorkdom,
+		layoutDowOfLastWeek, layoutDowOfSpecificWeek, layoutHash,
+		layoutHashAndInterval, layoutHashRange, layoutHashRangeAndInterval,
 	}
-	return re
+	fields := []fieldDescriptor{
+		secondDescriptor, minuteDescriptor, hourDescriptor, domDescriptor,
+		monthDescriptor, dowDescriptor, yearDescriptor,
+	}
+	table := make(map[layoutKey]*regexp.Regexp)
+	compiled := make(map[string]*regexp.Regexp) // fields share most patterns
+	for _, field := range fields {
+		for _, layout := range layouts {
+			pattern := strings.Replace(layout, `%value%`, field.valuePattern, -1)
+			if compiled[pattern] == nil {
+				compiled[pattern] = regexp.MustCompile(pattern)
+			}
+			table[layoutKey{layout, field.valuePattern}] = compiled[pattern]
+		}
+	}
+	return table
+}()
+
+func makeLayoutRegexp(layout, value string) *regexp.Regexp {
+	return layoutRegexp[layoutKey{layout, value}]
 }

@@ -8,9 +8,11 @@
 # each feature branch). On main:
 #   make bump minor          tag the release, notes in the tag body
 #   git push fork vX.Y.Z
-#   make changelog-sweep     then commit, and merge main back into develop
-# The first release has no vX tag to bump from:
-#   make bump major BUMP_BASE_CMD='echo v1.0.0'     -> v2.0.0
+#   make changelog-sweep     then commit
+# Then merge main back into develop before anything else lands there, and
+# run make changelog-sweep again, amending the merge: the squash hides
+# main's history, so the merge keeps develop's copies of the fragments.
+# git diff main develop should then be empty.
 
 PROJECT := cronexpr
 BIN     := bin/$(PROJECT)

@@ -217,9 +217,14 @@ var (
 	layoutHashAndInterval      = `^h/(\d+)$`
 	layoutHashRange            = `^h\((%value%)-(%value%)\)$`
 	layoutHashRangeAndInterval = `^h\((%value%)-(%value%)\)/(\d+)$`
-	fieldFinder                = regexp.MustCompile(`\S+`)
-	entryFinder                = regexp.MustCompile(`[^,]+`)
 )
+
+// isFieldSpace reports whether r separates fields: the regexp `\s` set of
+// space, tab, newline, carriage return and form feed. strings.Fields would
+// also split on a vertical tab and Unicode spaces.
+func isFieldSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f'
+}
 
 /******************************************************************************/
 
@@ -575,20 +580,22 @@ func toList(set map[int]bool) []int {
 // genericFieldParse reads the entries of a field. expr gives the hash for H;
 // it is nil for the year field, where H is a syntax error.
 func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cronDirective, error) {
-	// At least one entry must be present
-	indices := entryFinder.FindAllStringIndex(s, -1)
-	if len(indices) == 0 {
-		return nil, fmt.Errorf("%s field: missing directive", desc.name)
-	}
+	directives := make([]*cronDirective, 0, strings.Count(s, ",")+1)
 
-	directives := make([]*cronDirective, 0, len(indices))
-
-	for i := range indices {
-		directive := cronDirective{
-			sbeg: indices[i][0],
-			send: indices[i][1],
+	// Entries are split on commas; empty ones (`1,,2`) are skipped. sbeg and
+	// send keep each entry's place in s for error messages.
+	send := -1
+	for entry := range strings.SplitSeq(s, ",") {
+		sbeg := send + 1
+		send = sbeg + len(entry)
+		if entry == "" {
+			continue
 		}
-		snormal := strings.ToLower(s[indices[i][0]:indices[i][1]])
+		directive := cronDirective{
+			sbeg: sbeg,
+			send: send,
+		}
+		snormal := strings.ToLower(entry)
 
 		// `*`
 		if makeLayoutRegexp(layoutWildcard, desc.valuePattern).MatchString(snormal) {
@@ -669,6 +676,10 @@ func genericFieldParse(s string, desc fieldDescriptor, expr *Expression) ([]*cro
 		// No behavior for this one, let caller deal with it
 		directive.kind = none
 		directives = append(directives, &directive)
+	}
+	// At least one entry must be present
+	if len(directives) == 0 {
+		return nil, fmt.Errorf("%s field: missing directive", desc.name)
 	}
 	return directives, nil
 }

@@ -500,6 +500,41 @@ func TestRejected(t *testing.T) {
 	}
 }
 
+// Fields split on space, tab, newline, carriage return and form feed only;
+// empty entries between commas are skipped.
+func TestSplitting(t *testing.T) {
+	from := time.Date(2013, 9, 2, 8, 44, 30, 0, time.UTC)
+	for spec, same := range map[string]string{
+		"0\t9\n*  * *":         "0 9 * * *",
+		" 0\r9\f* * * ":        "0 9 * * *",
+		"0,,30 9 * * *":        "0,30 9 * * *",
+		",0, 9 * * *":          "0 9 * * *",
+		"0 9 1,,15 * MON,,FRI": "0 9 1,15 * MON,FRI",
+	} {
+		expr, err := Parse(spec)
+		if err != nil {
+			t.Errorf("Parse(%q) returned %q", spec, err)
+			continue
+		}
+		got, want := expr.NextN(from, 5), MustParse(same).NextN(from, 5)
+		for i := range want {
+			if !got[i].Equal(want[i]) {
+				t.Errorf("%q run %d: want %v (as %q), got %v", spec, i+1, want[i], same, got[i])
+				break
+			}
+		}
+	}
+	for _, spec := range []string{
+		", 9 * * *",    // a field of empty entries
+		"0\v9 * * * *", // vertical tab is not a separator
+		"0 9 * * * *",  // nor is a no-break space
+	} {
+		if _, err := Parse(spec); err == nil {
+			t.Errorf("Parse(%q) returned no error", spec)
+		}
+	}
+}
+
 // A run's Prev and Next lead back to it, for every spec of crontests.
 func TestPrevUndoesNext(t *testing.T) {
 	for _, test := range crontests {

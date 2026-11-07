@@ -116,7 +116,13 @@ which returns a slice of time.Time objects, containing the following time stamps
     2028-02-29 00:00:00
     2032-02-29 00:00:00
 
-The time zone of time values returned by `Next` and `NextN` is always the
+`Prev` and `PrevN` are their mirrors: the closest time stamps before the time
+given, latest first:
+
+    cronexpr.MustParse("0 0 29 2 *").PrevN(time.Now(), 2)
+
+The time zone of time values returned by `Next`, `NextN`, `Prev` and `PrevN`
+is always the
 time zone of the time value passed as argument, unless a zero time value is
 returned.
 

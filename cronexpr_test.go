@@ -513,3 +513,23 @@ func TestPrevUndoesNext(t *testing.T) {
 		}
 	}
 }
+
+// PrevN walks NextN's runs back, latest first, and stops short when the
+// runs run out.
+func TestPrevN(t *testing.T) {
+	expr := MustParse("0 0 * * 6#5")
+	from, _ := time.Parse("2006-01-02 15:04:05", "2013-09-02 08:44:30")
+	next := expr.NextN(from, 5)
+	prev := expr.PrevN(next[4].Add(time.Second), 5)
+	if len(prev) != 5 {
+		t.Fatalf("PrevN returned %d runs, want 5", len(prev))
+	}
+	for i := range prev {
+		if !prev[i].Equal(next[4-i]) {
+			t.Errorf("PrevN run %d: want %s, got %s", i+1, next[4-i], prev[i])
+		}
+	}
+	if got := MustParse("0 0 1 1 * 1970").PrevN(from, 3); len(got) != 1 {
+		t.Errorf("PrevN of a one-run expression returned %d runs, want 1", len(got))
+	}
+}

@@ -295,3 +295,26 @@ func (expr *Expression) NextN(fromTime time.Time, n uint) []time.Time {
 	}
 	return nextTimes
 }
+
+// PrevN returns a slice of `n` closest time instants immediately preceding
+// `fromTime` which match the cron expression `expr`. It is the mirror of
+// NextN.
+//
+// The time instants in the returned slice are in chronological descending
+// order. The `time.Location` of the returned time instants is the same as that
+// of `fromTime`.
+//
+// A slice with len between [0-`n`] is returned, that is, if not enough existing
+// matching time instants exist, the number of returned entries will be less
+// than `n`.
+func (expr *Expression) PrevN(fromTime time.Time, n uint) []time.Time {
+	prevTimes := make([]time.Time, 0, n)
+	for ; n > 0; n -= 1 {
+		fromTime = expr.Prev(fromTime)
+		if fromTime.IsZero() {
+			break
+		}
+		prevTimes = append(prevTimes, fromTime)
+	}
+	return prevTimes
+}

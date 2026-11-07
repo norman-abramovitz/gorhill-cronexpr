@@ -1,18 +1,25 @@
 # cronexpr — build, test and release.
 #
-# Branches: feature branches merge into develop; develop is squash-merged
-# into main, and releases are tagged on main only. Tags are vX.Y.Z (the
-# module path carries /v2, so Go resolves v2 tags).
+# Branches: work flows only into develop, and only develop feeds main.
+# Feature branches merge into develop. main receives develop as one
+# squash commit whose tree is develop's, and releases are tagged there.
+# Never commit on main, never merge main into develop. Tags are vX.Y.Z
+# (the module path carries /v2, so Go resolves v2 tags).
 #
 # Release notes come from changelog.d/ fragments (make changelog-new on
-# each feature branch). On main:
-#   make bump minor          tag the release, notes in the tag body
-#   git push fork vX.Y.Z
-#   make changelog-sweep     then commit
-# Then merge main back into develop before anything else lands there, and
-# run make changelog-sweep again, amending the merge: the squash hides
-# main's history, so the merge keeps develop's copies of the fragments.
-# git diff main develop should then be empty.
+# each feature branch). To release:
+#   git switch main
+#   git read-tree -u --reset develop     main's tree becomes develop's
+#   git commit                           the squash commit
+#   make bump minor                      tag it, the notes in the tag body
+#   git push fork main vX.Y.Z
+# then sweep on a branch into develop (make changelog-sweep); the next
+# release carries the sweep to main.
+
+# Tags sit on main only, so develop cannot reach them: take the newest
+# vX.Y.Z tag in the repo, not the nearest reachable one, then the next
+# patch, as version.mk's default does.
+VERSION_CMD := git tag -l 'v[0-9]*' --sort=-v:refname | head -n 1 | sed -e 's/^v//' | awk -F. 'NF==3 && $$3 ~ /^[0-9]+$$/ {print $$1"."$$2"."$$3+1}'
 
 PROJECT := cronexpr
 BIN     := bin/$(PROJECT)
